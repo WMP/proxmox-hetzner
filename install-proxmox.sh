@@ -347,10 +347,7 @@ if [ ! -n "$vnc_password" ]; then
     # Generate random VNC password
     vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
 fi
-echo
-echo "Connecto to vnc://$PUBLIC_IPV4:5900 with password: $vnc_password"
-echo "If VNC stuck before open installator, try to reconnect VNC client"
-echo
+
 
 # Detecting EFI/UEFI system
 if [ -d "/sys/firmware/efi" ]; then
@@ -399,6 +396,11 @@ while read -r line; do
 done < <(lsblk -o NAME -d -n -p | grep -v 'loop')
 
 if [ "$skip_installer" = false ]; then
+    echo
+    echo "Connecto to vnc://$PUBLIC_IPV4:5900 with password: $vnc_password"
+    echo "If VNC stuck before open installator, try to reconnect VNC client"
+    echo
+
     # Building QEMU command with detected hard disks
     qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine pc-q35-5.2 -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $latest_iso_name -vnc :0,password -monitor stdio -no-reboot"
     for disk in "${hard_disks[@]}"; do
