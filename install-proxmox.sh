@@ -202,7 +202,7 @@ change_ssh_port() {
 }
 
 disable_rpcbind() {
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "systemctl disable --now rpcbind rpcbind.socket"  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "systemctl disable --now rpcbind rpcbind.socket && systemctl mask rpcbind"  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
     echo "rpcbind disabled on proxmox server."
 }
 
