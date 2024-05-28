@@ -18,6 +18,7 @@ iface lo inet6 loopback
 
 iface #IFACE_NAME# inet manual
 
+#Public network bridge
 auto vmbr0
 iface vmbr0 inet static
     address #MAIN_IPV4_CIDR#
@@ -30,7 +31,7 @@ iface vmbr0 inet static
     hwaddress #MAIN_MAC_ADDR#
     pointopoint #MAIN_IPV4_GW#
     dns-nameservers 185.12.64.1 185.12.64.2
-    up sysctl -p
+    post-up   echo 1 > /proc/sys/net/ipv4/ip_forward
 
 iface vmbr0 inet6 static
     address #MAIN_IPV6_CIDR#
