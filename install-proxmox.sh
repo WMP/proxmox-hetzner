@@ -334,7 +334,7 @@ while read -r line; do
         continue
     fi
     hard_disks_text+=("$line")
-done < <(lsblk -o NAME,SIZE,SERIAL,VENDOR,MODEL,PARTTYPE -d -p | grep -v 'loop')
+done < <(lsblk -o NAME,SIZE,SERIAL,VENDOR,MODEL,PARTTYPE -d -p | grep -v 'loop' | grep -v 'sr')
 
 # Add a column with device path /dev/vd*
 device_path="/dev/vd"
@@ -361,7 +361,7 @@ echo
 hard_disks=()
 while read -r line; do
     hard_disks+=("$line")
-done < <(lsblk -o NAME -d -n -p | grep -v 'loop')
+done < <(lsblk -o NAME -d -n -p | grep -v 'loop' | grep -v 'sr')
 
 if [ "$skip_installer" = false ]; then
     # Building QEMU command with detected hard disks
