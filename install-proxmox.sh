@@ -237,10 +237,34 @@ set_network() {
     fi
 
     # Continue with setting up the network using the chosen IFACE_NAME
-    MAIN_IPV4_CIDR="$(ip address show ${IFACE_NAME} | grep global | grep "inet "| xargs | cut -d" " -f2)"
+    MAIN_IPV4_CIDR="$(ip address show ${WAN_IFACE} | grep global | grep "inet "| xargs | cut -d" " -f2)"
     MAIN_IPV4_GW="$(ip route | grep default | xargs | cut -d" " -f3)"
-    MAIN_IPV6_CIDR="$(ip address show ${IFACE_NAME} | grep global | grep "inet6 "| xargs | cut -d" " -f2)"
+    MAIN_IPV6_CIDR="$(ip address show ${WAN_IFACE} | grep global | grep "inet6 "| xargs | cut -d" " -f2)"
     MAIN_MAC_ADDR="$(cat /sys/class/net/${WAN_IFACE}/address)"
+
+    # Check if the MAIN_IPV4_CIDR variable has a value
+    if [ -z "$MAIN_IPV4_CIDR" ]; then
+        echo "Enter the value for MAIN_IPV4_CIDR manually:"
+        read -r MAIN_IPV4_CIDR
+    fi
+
+    # Check if the MAIN_IPV4_GW variable has a value
+    if [ -z "$MAIN_IPV4_GW" ]; then
+        echo "Enter the value for MAIN_IPV4_GW manually:"
+        read -r MAIN_IPV4_GW
+    fi
+
+    # Check if the MAIN_IPV6_CIDR variable has a value
+    if [ -z "$MAIN_IPV6_CIDR" ]; then
+        echo "Enter the value for MAIN_IPV6_CIDR manually:"
+        read -r MAIN_IPV6_CIDR
+    fi
+
+    # Check if the MAIN_MAC_ADDR variable has a value
+    if [ -z "$MAIN_MAC_ADDR" ]; then
+        echo "Enter the value for MAIN_MAC_ADDR manually:"
+        read -r MAIN_MAC_ADDR
+    fi
 
     sed -i "s|#IFACE_NAME#|$IFACE_NAME|g" ~/interfaces_sample
     sed -i "s|#MAIN_IPV4_CIDR#|$MAIN_IPV4_CIDR|g" ~/interfaces_sample
@@ -277,7 +301,11 @@ download_latest_proxmox_iso() {
     fi
 
     echo "Downloading the latest ISO file"
-    curl --remove-on-error -o "$latest_iso_name" "$ISO_URL/$latest_iso_name"
+    if curl --help all | grep -q -- --remove-on-error; then
+        curl --remove-on-error -o "$latest_iso_name" "$ISO_URL/$latest_iso_name"
+    else
+        curl -o "$latest_iso_name" "$ISO_URL/$latest_iso_name"
+    fi
 
     if [ $? -eq 0 ]; then
         echo "Downloaded the latest ISO image: $latest_iso_name"
@@ -339,14 +367,12 @@ run_tteck_post-pve-install() {
 
 
 ## EXECUTION ##
-
-# Call the function to download the latest Proxmox ISO
-download_latest_proxmox_iso
-
-if [ ! -n "$vnc_password" ]; then
-    # Generate random VNC password
-    vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+if ! dpkg -s qemu-system netcat ovmf >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y qemu-system netcat ovmf
 fi
+
+
 
 
 # Detecting EFI/UEFI system
@@ -395,14 +421,24 @@ while read -r line; do
     hard_disks+=("$line")
 done < <(lsblk -o NAME -d -n -p | grep -v 'loop' | grep -v 'sr')
 
+latest_machine=$(qemu-system-x86_64 -machine help | grep -oP "pc-q35-\d+\.\d+" | sort -V | tail -n 1)
+
 if [ "$skip_installer" = false ]; then
+    # Call the function to download the latest Proxmox ISO
+    download_latest_proxmox_iso
+
+    if [ ! -n "$vnc_password" ]; then
+        # Generate random VNC password
+        vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+    fi
+
     echo
     echo "Connecto to vnc://$PUBLIC_IPV4:5900 with password: $vnc_password"
     echo "If VNC stuck before open installator, try to reconnect VNC client"
     echo
 
     # Building QEMU command with detected hard disks
-    qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine pc-q35-5.2 -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $latest_iso_name -vnc :0,password -monitor stdio -no-reboot"
+    qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $latest_iso_name -vnc :0,password -monitor stdio -no-reboot"
     for disk in "${hard_disks[@]}"; do
         qemu_command+=" -drive file=$disk,format=raw,media=disk,if=virtio"
     done
@@ -416,7 +452,7 @@ if [ "$skip_installer" = false ]; then
     fi    
 fi
 
-qemu_command="qemu-system-x86_64 -machine pc-q35-5.2 -enable-kvm $bios -cpu host -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 -smp 4 -m 4096"
+qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 -smp 4 -m 4096"
 for disk in "${hard_disks[@]}"; do
     qemu_command+=" -drive file=$disk,format=raw,media=disk,if=virtio"
 done
