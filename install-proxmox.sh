@@ -445,6 +445,8 @@ if [ "$skip_installer" = false ]; then
     echo "Connecto to vnc://$PUBLIC_IPV4:5900 with password: $vnc_password"
     echo "If VNC stuck before open installator, try to reconnect VNC client"
     echo
+    echo "In the network settings window, make sure to set the correct hostname and DO NOT change the IP addresses. There IP addresses are needed only for the system installation process."
+    echo
 
     # Building QEMU command with detected hard disks
     qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $latest_iso_name -vnc :0,password -monitor stdio -no-reboot"
