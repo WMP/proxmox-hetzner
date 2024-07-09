@@ -12,7 +12,7 @@ show_help() {
     echo "OPTIONS:"
     echo "  -v, --vnc-password PASSWORD   Set VNC password"
     echo "  -P, --port PORT               Change default SSH port"
-    echo "  -k, --ssh-key SSH_KEY         Add SSH public key to authorized_keys"
+    echo "  -k, --ssh-key SSH_KEY         Add SSH public key to authorized_keys (must be a path to .pub file)"
     echo "  -e, --acme-email EMAIL        Set email for ACME account, required for register_acme_account plugin"
     echo "  --skip-installer              Skip Proxmox installer and boot directly from installed disks"
     echo "  --no-shutdown                 Do not shut down the virtual machine after finishing work"
@@ -122,6 +122,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -k|--ssh-key)
             ssh_key="$2"
+            if [[ "$ssh_key" != *.pub ]]; then
+                echo "Error: Provided SSH key file must have a .pub extension."
+                exit 1
+            fi
             shift
             shift
             ;;
@@ -180,18 +184,23 @@ add_ssh_key_to_authorized_keys() {
     if [ -n "$ssh_key" ]; then
         if [ -f "$ssh_key" ]; then
             # Copy SSH key to local host via scp
-            ssh-copy-id -f -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$ssh_key"  -p 5555 root@127.0.0.1  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
-            echo "Added SSH public key to authorized_keys"
-
-            # Disable password authentication for SSH
-            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "sed -i 's/^PasswordAuthentication yes$/PasswordAuthentication no/' /etc/ssh/sshd_config"  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
-            echo "Password authentication disabled for SSH"
+            if ssh-copy-id -f -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$ssh_key" -p 5555 root@127.0.0.1 2>&1 | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'; then
+                echo "Added SSH public key to authorized_keys"
+                
+                # Disable password authentication for SSH
+                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "sed -i 's/^PasswordAuthentication yes$/PasswordAuthentication no/' /etc/ssh/sshd_config" 2>&1 | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+                echo "Password authentication disabled for SSH"
+            else
+                echo "Error: Failed to copy SSH public key to authorized_keys."
+                exit 1
+            fi
         else
             echo "Error: File '$ssh_key' does not exist."
             exit 1
         fi
     fi
 }
+
 
 change_ssh_port() {
     if [ -n "$ssh_port" ]; then
