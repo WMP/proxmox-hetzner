@@ -367,9 +367,9 @@ run_tteck_post-pve-install() {
 
 
 ## EXECUTION ##
-if ! dpkg -s qemu-system netcat ovmf >/dev/null 2>&1; then
+if ! dpkg -s qemu-system netcat-traditional ovmf >/dev/null 2>&1; then
   apt-get update
-  apt-get install -y qemu-system netcat ovmf
+  apt-get install -y qemu-system netcat-traditional ovmf
 fi
 
 
