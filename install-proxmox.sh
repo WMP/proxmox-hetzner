@@ -55,6 +55,9 @@ describe_plugin() {
         "change_ssh_port")
             echo "Change default SSH port"
             ;;
+        "add_tun_lxc_device")
+            echo "Add default configuration to LXC containers to create a tun interface"
+            ;;
         *)
             echo "No description available"
             ;;
@@ -88,6 +91,9 @@ run_plugin() {
         "change_ssh_port")
             change_ssh_port
             ;;
+        "add_tun_lxc")
+            add_tun_lxc
+            ;;
         *)
             echo "Unknown plugin: $1"
             ;;
@@ -104,7 +110,7 @@ print_interface_names() {
 }
 
 # Default list of plugins
-plugin_list="update_locale_gen,set_network,run_tteck_post-pve-install,register_acme_account,disable_rpcbind,install_iptables_rule,add_ssh_key_to_authorized_keys,change_ssh_port"
+plugin_list="update_locale_gen,set_network,run_tteck_post-pve-install,register_acme_account,disable_rpcbind,install_iptables_rule,add_ssh_key_to_authorized_keys,change_ssh_port,add_tun_lxc_device"
 
 # Parsing command line options
 while [[ $# -gt 0 ]]; do
@@ -368,6 +374,15 @@ register_acme_account() {
         \" && pvenode config set --acme domains=\$(hostname -f) 
     "  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
     order_acme_certificate
+}
+
+add_tun_lxc() {
+    cat <<EOF >/usr/share/lxc/config/common.conf.d/10-tun.conf
+lxc.cgroup2.devices.allow = c 10:200 rwm
+lxc.hook.pre-start = sh -c "/usr/sbin/modprobe tun && [ ! -e /dev/net/tun-lxc ] && /usr/bin/mknod /dev/net/tun-lxc c 10 200 || true && /usr/bin/chown 100000:100000 /dev/net/tun-lxc"
+lxc.mount.entry = /dev/net/tun-lxc dev/net/tun none bind,create=file
+EOF
+
 }
 
 run_tteck_post-pve-install() {
