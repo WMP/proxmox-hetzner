@@ -5,6 +5,7 @@ skip_installer=false
 no_shutdown=false
 verbose=false
 specified_iface_name=""
+use_ovh=false
 
 # Function to show help message
 show_help() {
@@ -168,6 +169,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --verbose)
             verbose=true
+            shift
+            ;;
+        --ovh)
+            use_ovh=true
             shift
             ;;
         -h|--help)
@@ -476,6 +481,42 @@ if [ "$skip_installer" = false ]; then
     else
         eval "$qemu_command > /dev/null 2>&1"
     fi    
+fi
+
+# Set up bridge networking if --ovh is specified
+if [ "$use_ovh" = true ]; then
+  BRIDGE_NAME="br0"
+  BRIDGE_IP="10.0.2.2"
+  SUBNET="10.0.2.0/24"
+  OUT_INTERFACE="eth0"  # Replace with actual outgoing interface
+
+  # Create and configure bridge if it doesn't exist
+  if ! ip link show $BRIDGE_NAME > /dev/null 2>&1; then
+    echo "Creating bridge $BRIDGE_NAME..."
+    ip link add name $BRIDGE_NAME type bridge
+    ip addr add $BRIDGE_IP/24 dev $BRIDGE_NAME
+    ip link set $BRIDGE_NAME up
+
+    # Enable IP forwarding
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+
+    # Set up NAT for the bridge network
+    iptables -t nat -A POSTROUTING -s $SUBNET -o $OUT_INTERFACE -j MASQUERADE
+
+    iptables -t nat -A PREROUTING -p tcp --dport 5555 -j REDIRECT --to-port 22
+
+    # Configure bridge permissions for QEMU
+    sudo mkdir -p /etc/qemu
+    echo "allow $BRIDGE_NAME" | sudo tee /etc/qemu/bridge.conf
+  fi
+
+  # Construct QEMU command with bridge networking
+  qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host \
+  -netdev bridge,id=net0,br=$BRIDGE_NAME -device virtio-net-pci,netdev=net0 -smp 4 -m 4096"
+else
+  # Default QEMU command with user networking
+  qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host \
+  -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 -smp 4 -m 4096"
 fi
 
 qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 -smp 4 -m 4096"
