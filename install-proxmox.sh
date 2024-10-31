@@ -6,6 +6,7 @@ no_shutdown=false
 verbose=false
 specified_iface_name=""
 use_ovh=false
+rescue=false
 
 # Function to show help message
 show_help() {
@@ -21,6 +22,7 @@ show_help() {
     echo "  --list-ifaces                 List network interfaces and exit"
     echo "  --iface-name NAME             Specify the network interface name directly"
     echo "  --verbose                     Enable extra log output"
+    echo "  --rescue                      Start QEMU in rescue mode with VNC and attached disks"
     echo "  -h, --help                    Show this help message and exit"
     echo ""
     echo "Available plugins (default enabled):"
@@ -92,8 +94,8 @@ run_plugin() {
         "change_ssh_port")
             change_ssh_port
             ;;
-        "add_tun_lxc")
-            add_tun_lxc
+        "add_tun_lxc_device")
+            add_tun_lxc_device
             ;;
         *)
             echo "Unknown plugin: $1"
@@ -169,6 +171,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --verbose)
             verbose=true
+            shift
+            ;;
+        --rescue)
+            rescue=true
             shift
             ;;
         -h|--help)
@@ -377,6 +383,9 @@ EOF
 }
 
 register_acme_account() {
+    # Exit the function if acme_email is not set
+    [ -z "$acme_email" ] && return 1
+
     ssh -o CheckHostIP=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP " 
         apt update && apt install -y expect && 
         expect -c \"
@@ -385,11 +394,12 @@ register_acme_account() {
             send \"y\\\r\"
             interact
         \" && pvenode config set --acme domains=\$(hostname -f) 
-    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    "  2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    
     order_acme_certificate
 }
 
-add_tun_lxc() {
+add_tun_lxc_device() {
     cat <<EOF >/usr/share/lxc/config/common.conf.d/10-tun.conf
 lxc.cgroup2.devices.allow = c 10:200 rwm
 lxc.hook.pre-start = sh -c "/usr/sbin/modprobe tun && [ ! -e /dev/net/tun-lxc ] && /usr/bin/mknod /dev/net/tun-lxc c 10 200 || true && /usr/bin/chown 100000:100000 /dev/net/tun-lxc"
@@ -471,6 +481,32 @@ while read -r line; do
 done < <(lsblk -o NAME -d -n -p | grep -v 'loop' | grep -v 'sr')
 
 latest_machine=$(qemu-system-x86_64 -machine help | grep -oP "pc-q35-\d+\.\d+" | sort -V | tail -n 1)
+
+# Build the QEMU command with VNC and mounted disks if --rescue is specified
+if [ "$rescue" = true ]; then
+    # Generate a random VNC password if not set
+    if [ -z "$vnc_password" ]; then
+        vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+    fi
+
+    # Construct the QEMU command in rescue mode
+    echo "Starting QEMU in rescue mode with VNC access"
+    qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -vnc :0,password -monitor stdio -no-reboot"
+    
+    # Mount each detected hard disk
+    for disk in "${hard_disks[@]}"; do
+        qemu_command+=" -drive file=$disk,format=raw,media=disk,if=virtio"
+    done
+    
+    # Run the rescue QEMU command
+    if [ "$verbose" = true ]; then
+        echo "$qemu_command"
+        eval "$qemu_command"
+    else
+        eval "$qemu_command > /dev/null 2>&1"
+    fi
+    exit 0  # Exit the script after starting in rescue mode
+fi
 
 if [ "$skip_installer" = false ]; then
     # Call the function to download the latest Proxmox ISO
