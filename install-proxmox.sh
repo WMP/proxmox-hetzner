@@ -304,7 +304,7 @@ set_network() {
     fi
 
     # Apply the configuration
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 5555 ~/interfaces_sample root@$SSHIP:/etc/network/interfaces  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT ~/interfaces_sample root@$SSHIP:/etc/network/interfaces  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
     # Configure DNS on the remote machine
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "printf 'nameserver $DNS1\nnameserver $DNS2\n' > /etc/resolv.conf; sed -i 's/10.0.2.15/$PUBLIC_IPV4/' /etc/hosts;"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
@@ -370,7 +370,7 @@ EOF
 
     chmod +x /root/acme_certificate_order_script.sh
 
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 5555 /root/acme_certificate_order_script.sh $SSHIP:/root/acme_certificate_order_script.sh  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)" && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /root/acme_certificate_order_script.sh $SSHIP:/root/acme_certificate_order_script.sh  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)" && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
         echo -e \"@reboot root /root/acme_certificate_order_script.sh > /var/log/acme_certificate_order_script.log\n\" > /etc/cron.d/acme_certificate_order_cron && \
         chmod 644 /etc/cron.d/acme_certificate_order_cron
     "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
