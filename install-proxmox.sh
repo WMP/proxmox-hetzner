@@ -288,7 +288,7 @@ set_network() {
         read -r MAIN_MAC_ADDR
     fi
 
-    sed -i "s|#IFACE_NAME#|$IFACE_NAME|g" ~/interfaces_sample
+    # sed -i "s|#IFACE_NAME#|$IFACE_NAME|g" ~/interfaces_sample
     sed -i "s|#MAIN_IPV4_CIDR#|$MAIN_IPV4_CIDR|g" ~/interfaces_sample
     sed -i "s|#MAIN_IPV4_GW#|$MAIN_IPV4_GW|g" ~/interfaces_sample
     sed -i "s|#MAIN_MAC_ADDR#|$MAIN_MAC_ADDR|g" ~/interfaces_sample
@@ -314,7 +314,75 @@ set_network() {
 
     # Configure DNS on the remote machine
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "printf 'nameserver $DNS1\nnameserver $DNS2\n' > /etc/resolv.conf; sed -i 's/10.0.2.15/$PUBLIC_IPV4/' /etc/hosts;"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+
+    configure_network_interface()
 }
+
+configure_network_interface() {
+    # Create the configuration script locally
+    cat <<EOF > /root/configure_network_interface.sh
+#!/bin/bash
+
+# Target MAC address from the main script
+TARGET_MAC="$MAIN_MAC_ADDR"
+
+# Find the interface with the specified MAC address
+INTERFACE=\$(ip -o link | grep "\$TARGET_MAC" | awk '{print \$2}' | sed 's/://')
+
+# Check if the interface was found
+if [ -n "\$INTERFACE" ]; then
+    echo "Found network interface \$INTERFACE with MAC \$TARGET_MAC"
+
+    # Update the network configuration by replacing placeholder INTERFACE_NAME
+    sed -i "s/#IFACE_NAME#/\$INTERFACE/" /etc/network/interfaces
+
+    # Start the network initialization unit
+    systemctl start systemd-networkd
+else
+    echo "No network interface found with MAC \$TARGET_MAC"
+    exit 1
+fi
+
+# Disable and remove this unit after execution
+systemctl disable configure-network-interface.service
+rm -f /etc/systemd/system/configure-network-interface.service
+EOF
+
+    # Make the script executable locally
+    chmod +x /root/configure_network_interface.sh
+
+    # Transfer the configuration script to the remote server
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /root/configure_network_interface.sh $SSHIP:/root/configure_network_interface.sh 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+
+    # Create the systemd service file locally
+    cat <<EOF > /etc/systemd/system/configure-network-interface.service
+[Unit]
+Description=Configure network interface with specific MAC address
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/configure_network_interface.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Transfer the systemd service file to the remote server
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /etc/systemd/system/configure-network-interface.service $SSHIP:/etc/systemd/system/configure-network-interface.service 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+
+    # Enable the service remotely
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
+        chmod +x /root/configure_network_interface.sh
+        systemctl enable configure-network-interface.service
+    " 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+}
+
 
 
 # Function to download the latest Proxmox ISO if not already downloaded
