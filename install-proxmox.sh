@@ -408,7 +408,7 @@ if [ -f /etc/ovh ]; then
     use_ovh=true
     echo "Detected OVH environment."
     SSHPORT=22
-    SSHIP="10.0.2.2"
+    SSHIP="10.0.2.15"
 else
     echo "Detected Hetzner environment."
     SSHPORT=5555
@@ -578,3 +578,4 @@ done
 if [ "$no_shutdown" = false ]; then
     echo "Shutting down the virtual machine..."
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "poweroff" 2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+fi
