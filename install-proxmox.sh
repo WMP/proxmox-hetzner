@@ -191,11 +191,11 @@ add_ssh_key_to_authorized_keys() {
     if [ -n "$ssh_key" ]; then
         if [ -f "$ssh_key" ]; then
             # Copy SSH key to local host via scp
-            if ssh-copy-id -f -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$ssh_key" -p 5555 root@127.0.0.1 2>&1 | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'; then
+            if ssh-copy-id -f -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$ssh_key" -p $SSHPORT root@$SSHIP 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"; then
                 echo "Added SSH public key to authorized_keys"
                 
                 # Disable password authentication for SSH
-                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "sed -i 's/^PasswordAuthentication yes$/PasswordAuthentication no/' /etc/ssh/sshd_config" 2>&1 | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "sed -i 's/^PasswordAuthentication yes$/PasswordAuthentication no/' /etc/ssh/sshd_config" 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
                 echo "Password authentication disabled for SSH"
             else
                 echo "Error: Failed to copy SSH public key to authorized_keys."
@@ -211,36 +211,36 @@ add_ssh_key_to_authorized_keys() {
 
 change_ssh_port() {
     if [ -n "$ssh_port" ]; then
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "sed -i 's/^#Port.*$/Port $ssh_port/' /etc/ssh/sshd_config"  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "echo 'Port $ssh_port' >> /root/.ssh/config"  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "sed -i 's/^#Port.*$/Port $ssh_port/' /etc/ssh/sshd_config"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "echo 'Port $ssh_port' >> /root/.ssh/config"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
         echo "SSH port changed to $ssh_port on proxmox server."
     fi
 }
 
 disable_rpcbind() {
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "systemctl disable --now rpcbind rpcbind.socket && systemctl mask rpcbind"  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "systemctl disable --now rpcbind rpcbind.socket && systemctl mask rpcbind"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
     echo "rpcbind disabled on proxmox server."
 }
 
 install_iptables_rule() {
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 127.0.0.1 "
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
         echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections &&
         echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections &&
         apt-get install -y iptables-persistent &&
         iptables -I INPUT -i vmbr0 -p tcp -m tcp --dport 3128 -j DROP &&
         netfilter-persistent save
-    "  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 update_locale_gen() {
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 127.0.0.1 "
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
         if grep -q \"^# *\$LC_NAME\" /etc/locale.gen; then
             sed -i \"s/^# *\$LC_NAME/\$LC_NAME/\" /etc/locale.gen
             locale-gen
             echo \"Updated /etc/locale.gen and generated locales for \$LC_NAME\"
         fi
         update-locale LANG=en_US.UTF-8
-    "  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 set_network() {
@@ -304,10 +304,10 @@ set_network() {
     fi
 
     # Apply the configuration
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 5555 ~/interfaces_sample root@127.0.0.1:/etc/network/interfaces  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 5555 ~/interfaces_sample root@$SSHIP:/etc/network/interfaces  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
     # Configure DNS on the remote machine
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 127.0.0.1 "printf 'nameserver $DNS1\nnameserver $DNS2\n' > /etc/resolv.conf; sed -i 's/10.0.2.15/$PUBLIC_IPV4/' /etc/hosts;"  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "printf 'nameserver $DNS1\nnameserver $DNS2\n' > /etc/resolv.conf; sed -i 's/10.0.2.15/$PUBLIC_IPV4/' /etc/hosts;"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 
@@ -344,8 +344,8 @@ download_latest_proxmox_iso() {
 
 # Function to check if SSH server is up with a timeout of 60 seconds
 check_ssh_server() {
-    local server="127.0.0.1"
-    local port="5555"
+    local server="$SSHIP"
+    local port="$SSHPORT"
     local timeout=60
     local end_time=$((SECONDS + timeout))
 
@@ -370,14 +370,14 @@ EOF
 
     chmod +x /root/acme_certificate_order_script.sh
 
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 5555 /root/acme_certificate_order_script.sh 127.0.0.1:/root/acme_certificate_order_script.sh  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)' && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 127.0.0.1 "
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P 5555 /root/acme_certificate_order_script.sh $SSHIP:/root/acme_certificate_order_script.sh  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)" && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
         echo -e \"@reboot root /root/acme_certificate_order_script.sh > /var/log/acme_certificate_order_script.log\n\" > /etc/cron.d/acme_certificate_order_cron && \
         chmod 644 /etc/cron.d/acme_certificate_order_cron
-    "  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 register_acme_account() {
-    ssh -o CheckHostIP=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 127.0.0.1 " 
+    ssh -o CheckHostIP=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP " 
         apt update && apt install -y expect && 
         expect -c \"
             spawn pvenode acme account register default $acme_email --directory https://acme-v02.api.letsencrypt.org/directory
@@ -385,7 +385,7 @@ register_acme_account() {
             send \"y\\\r\"
             interact
         \" && pvenode config set --acme domains=\$(hostname -f) 
-    "  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
     order_acme_certificate
 }
 
@@ -399,7 +399,7 @@ EOF
 }
 
 run_tteck_post-pve-install() {
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 127.0.0.1  -t  'bash -c "$(wget -qLO - https://github.com/tteck/Proxmox/raw/main/misc/post-pve-install.sh)"'
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP  -t  'bash -c "$(wget -qLO - https://github.com/tteck/Proxmox/raw/main/misc/post-pve-install.sh)"'
 }
 
 
@@ -407,6 +407,12 @@ run_tteck_post-pve-install() {
 if [ -f /etc/ovh ]; then
     use_ovh=true
     echo "Detected OVH environment."
+    SSHPORT=22
+    SSHIP="10.0.2.2"
+else
+    echo "Detected Hetzner environment."
+    SSHPORT=5555
+    SSHIP="127.0.0.1"
 fi
 
 ## EXECUTION ##
@@ -517,7 +523,7 @@ if [ "$use_ovh" = true ]; then
     # Set up NAT for the bridge network
     iptables -t nat -A POSTROUTING -s $SUBNET -o $OUT_INTERFACE -j MASQUERADE
 
-    iptables -t nat -A PREROUTING -p tcp --dport 5555 -j REDIRECT --to-port 22
+    # iptables -t nat -A PREROUTING -p tcp --dport 5555 -j REDIRECT --to-port 22
 
     # Configure bridge permissions for QEMU
     sudo mkdir -p /etc/qemu
@@ -553,14 +559,15 @@ if [ ! -f /root/.ssh/id_rsa ]; then
 fi
 
 echo "Waiting for start SSH server on proxmox..."
-check_ssh_server || echo "Fatal: Proxmox may not have started properly because SSH on socket 127.0.0.1:5555 is not working."
+check_ssh_server || echo "Fatal: Proxmox may not have started properly because SSH on socket $SSHIP:$SSHPORT is not working."
 echo
 echo "Please enter the password for the root user that you set during the Proxmox installation."
 echo "Remember not to select the reboot option in the 'run_tteck_post-pve-install' plugin!"
 echo
 
-ssh-copy-id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 127.0.0.1  -C exit  2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
+ssh-copy-id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP -C exit 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+
 
 # Run enabled plugins
 for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
@@ -570,5 +577,4 @@ done
 # Shut down the virtual machine if --no-shutdown option is not used
 if [ "$no_shutdown" = false ]; then
     echo "Shutting down the virtual machine..."
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 root@127.0.0.1 "poweroff" 2>&1  | egrep -v '(Warning: Permanently added |Connection to 127.0.0.1 closed)'
-fi
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "poweroff" 2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
