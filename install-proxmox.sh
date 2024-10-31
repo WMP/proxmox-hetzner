@@ -484,13 +484,18 @@ latest_machine=$(qemu-system-x86_64 -machine help | grep -oP "pc-q35-\d+\.\d+" |
 
 # Build the QEMU command with VNC and mounted disks if --rescue is specified
 if [ "$rescue" = true ]; then
-    # Generate a random VNC password if not set
-    if [ -z "$vnc_password" ]; then
+    if [ ! -n "$vnc_password" ]; then
+        # Generate random VNC password
         vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
     fi
 
     # Construct the QEMU command in rescue mode
     echo "Starting QEMU in rescue mode with VNC access"
+    echo
+    echo "Connecto to vnc://$PUBLIC_IPV4:5900 with password: $vnc_password"
+    echo "If VNC stuck before open installator, try to reconnect VNC client"
+    echo
+
     qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -vnc :0,password -monitor stdio -no-reboot"
     
     # Mount each detected hard disk
