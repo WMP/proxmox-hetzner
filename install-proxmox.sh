@@ -171,10 +171,6 @@ while [[ $# -gt 0 ]]; do
             verbose=true
             shift
             ;;
-        --ovh)
-            use_ovh=true
-            shift
-            ;;
         -h|--help)
             show_help
             exit 0
@@ -406,6 +402,12 @@ run_tteck_post-pve-install() {
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 5555 127.0.0.1  -t  'bash -c "$(wget -qLO - https://github.com/tteck/Proxmox/raw/main/misc/post-pve-install.sh)"'
 }
 
+
+# Check if we are in an OVH environment by detecting /etc/ovh
+if [ -f /etc/ovh ]; then
+    use_ovh=true
+    echo "Detected OVH environment."
+fi
 
 ## EXECUTION ##
 if ! dpkg -s qemu-system netcat-traditional ovmf >/dev/null 2>&1; then
