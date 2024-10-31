@@ -533,7 +533,6 @@ else
   -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 -smp 4 -m 4096"
 fi
 
-qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 -smp 4 -m 4096"
 for disk in "${hard_disks[@]}"; do
     qemu_command+=" -drive file=$disk,format=raw,media=disk,if=virtio"
 done
