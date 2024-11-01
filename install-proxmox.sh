@@ -468,6 +468,7 @@ register_acme_account() {
 }
 
 add_tun_lxc_device() {
+    touch /usr/share/lxc/config/common.conf.d/10-tun.conf
     cat <<EOF >/usr/share/lxc/config/common.conf.d/10-tun.conf
 lxc.cgroup2.devices.allow = c 10:200 rwm
 lxc.hook.pre-start = sh -c "/usr/sbin/modprobe tun && [ ! -e /dev/net/tun-lxc ] && /usr/bin/mknod /dev/net/tun-lxc c 10 200 || true && /usr/bin/chown 100000:100000 /dev/net/tun-lxc"
@@ -479,6 +480,12 @@ EOF
 run_tteck_post-pve-install() {
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP  -t  'bash -c "$(wget -qLO - https://github.com/tteck/Proxmox/raw/main/misc/post-pve-install.sh)"'
 }
+
+## EXECUTION ##
+if ! dpkg -s qemu-system netcat-traditional ovmf >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y qemu-system netcat-traditional ovmf
+fi
 
 
 # Check if we are in an OVH environment by detecting /etc/ovh
@@ -492,15 +499,6 @@ else
     SSHPORT=5555
     SSHIP="127.0.0.1"
 fi
-
-## EXECUTION ##
-if ! dpkg -s qemu-system netcat-traditional ovmf >/dev/null 2>&1; then
-  apt-get update
-  apt-get install -y qemu-system netcat-traditional ovmf
-fi
-
-
-
 
 # Detecting EFI/UEFI system
 if [ -d "/sys/firmware/efi" ]; then
