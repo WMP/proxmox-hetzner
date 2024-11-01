@@ -486,20 +486,45 @@ check_ssh_server() {
 order_acme_certificate() {
     cat <<EOF > /root/acme_certificate_order_script.sh
 #!/bin/bash
-sleep 30;
-pvenode acme cert order
 
-rm "/etc/cron.d/acme_certificate_order_cron"
-rm "/root/acme_certificate_order_script.sh"
+# Determine WAN Interface and Public IP
+WAN_IFACE=\$(ip route show default | awk '/default/ {print \$5}')
+PUBLIC_IPV4=\$(ip -f inet addr show \${WAN_IFACE} | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
+
+# Function to check if DNS record matches the server's public IP
+check_dns_record() {
+    DNS_IP=\$(dig +short "\$(hostname -f)")
+    if [[ "\$DNS_IP" == "\$PUBLIC_IPV4" ]]; then
+        echo "DNS record matches server's public IP: \$PUBLIC_IPV4"
+        return 0
+    else
+        echo "Waiting for DNS record to update. Current DNS IP: \$DNS_IP"
+        return 1
+    fi
+}
+
+# Check DNS record, order ACME certificate if matching, and clean up
+if check_dns_record; then
+    pvenode acme cert order
+    
+    # Remove the cron job and cleanup the script
+    rm -f /etc/cron.d/acme_certificate_order_cron
+    rm -f /root/acme_certificate_order_script.sh
+fi
 EOF
 
+    # Make the script executable and copy it to the remote server
     chmod +x /root/acme_certificate_order_script.sh
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /root/acme_certificate_order_script.sh $SSHIP:/root/acme_certificate_order_script.sh 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /root/acme_certificate_order_script.sh $SSHIP:/root/acme_certificate_order_script.sh  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)" && ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
-        echo -e \"@reboot root /root/acme_certificate_order_script.sh > /var/log/acme_certificate_order_script.log\n\" > /etc/cron.d/acme_certificate_order_cron && \
+    # Set up cron to run the script every minute and log output
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
+        echo -e \"* * * * * root /root/acme_certificate_order_script.sh > /var/log/acme_certificate_order_script.log 2>&1\n\" > /etc/cron.d/acme_certificate_order_cron && \
         chmod 644 /etc/cron.d/acme_certificate_order_cron
-    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    " 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
+
+
 
 register_acme_account() {
     # Exit the function if acme_email is not set
