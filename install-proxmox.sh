@@ -315,7 +315,7 @@ set_network() {
     # Configure DNS on the remote machine
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "printf 'nameserver $DNS1\nnameserver $DNS2\n' > /etc/resolv.conf; sed -i 's/10.0.2.15/$PUBLIC_IPV4/' /etc/hosts;"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
-    configure_network_interface()
+    configure_network_interface
 }
 
 configure_network_interface() {
