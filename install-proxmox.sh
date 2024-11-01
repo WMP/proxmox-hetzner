@@ -7,15 +7,18 @@ verbose=false
 specified_iface_name=""
 use_ovh=false
 rescue=false
+zabbix_server_address=""
+zabbix_agent_version=""
+zabbix_hostname=""
+ssh_port=""
+ssh_key=""
+acme_email=""
 
 # Function to show help message
 show_help() {
     echo "Usage: $0 [OPTIONS]"
-    echo "OPTIONS:"
-    echo "  -v, --vnc-password PASSWORD   Set VNC password"
-    echo "  -P, --port PORT               Change default SSH port"
-    echo "  -k, --ssh-key SSH_KEY         Add SSH public key to authorized_keys (must be a path to .pub file)"
-    echo "  -e, --acme-email EMAIL        Set email for ACME account, required for register_acme_account plugin"
+    echo ""
+    echo "General options:"
     echo "  --skip-installer              Skip Proxmox installer and boot directly from installed disks"
     echo "  --no-shutdown                 Do not shut down the virtual machine after finishing work"
     echo "  --disable PLUGIN1,PLUGIN2     Disable specified plugins"
@@ -25,41 +28,53 @@ show_help() {
     echo "  --rescue                      Start QEMU in rescue mode with VNC and attached disks"
     echo "  -h, --help                    Show this help message and exit"
     echo ""
-    echo "Available plugins (default enabled):"
+    echo "Optional plugins (additional options required):"
+    
+    # Output only optional plugins with required parameters
     for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
-        echo "  $plugin: $(describe_plugin "$plugin")"
+        [[ "$(describe_plugin "$plugin")" == *"[Optional]"* ]] && echo "  $plugin: $(describe_plugin "$plugin")"
+    done
+    
+    echo ""
+    echo "Default plugins:"
+    for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
+        [[ "$(describe_plugin "$plugin")" == *"[Default]"* ]] && echo "  $plugin: $(describe_plugin "$plugin")"
     done
 }
 
 # Function to describe each plugin
 describe_plugin() {
+    local is_help=${2:-false} # if true, display optional plugin parameters in help
     case $1 in
         "run_tteck_post-pve-install")
-            echo "Run additional post-installation tasks from https://tteck.github.io/Proxmox/"
+            echo "[Default] Run additional post-installation tasks from https://tteck.github.io/Proxmox/"
             ;;
         "set_network")
-            echo "Configure network settings based on Hetzner rescure network"
+            echo "[Default] Configure network settings based on Hetzner rescue network"
             ;;
         "update_locale_gen")
-            echo "Update locale settings with your ssh_client LC_NAME: ${LC_NAME}"
+            echo "[Default] Update locale settings with your ssh_client LC_NAME: ${LC_NAME}"
             ;;
         "register_acme_account")
-            echo "Get Let's Encrypt certificate for hostname set in Proxmox installer. Cert ordering is after reboot"
+            [[ "$is_help" == true ]] && echo "[Optional] Registers an ACME account for Let's Encrypt SSL certificate. Requires -e|--acme-email EMAIL" || echo "[Optional]"
             ;;
         "disable_rpcbind")
-            echo "Disable rpcbind service"
+            echo "[Default] Disable rpcbind service"
             ;;
         "install_iptables_rule")
-            echo "Install custom iptables rule"
+            echo "[Default] Install custom iptables rule"
             ;;
         "add_ssh_key_to_authorized_keys")
-            echo "Add SSH public key to authorized_keys file and disable ssh only password login"
+            [[ "$is_help" == true ]] && echo "[Optional] Adds SSH public key to authorized_keys. Requires -k|--ssh-key SSH_KEY" || echo "[Optional]"
             ;;
         "change_ssh_port")
-            echo "Change default SSH port"
+            [[ "$is_help" == true ]] && echo "[Optional] Changes the default SSH port for Proxmox server. Requires -P|--port PORT" || echo "[Optional]"
             ;;
         "add_tun_lxc_device")
-            echo "Add default configuration to LXC containers to create a tun interface"
+            echo "[Default] Add default configuration to LXC containers to create a tun interface"
+            ;;
+        "zabbix_agent")
+            [[ "$is_help" == true ]] && echo "[Optional] Installs and configures Zabbix Agent. Requires --zabbix-server ADDRESS, optional --zabbix-agent-version, and --zabbix-hostname" || echo "[Optional]"
             ;;
         *)
             echo "No description available"
@@ -97,52 +112,22 @@ run_plugin() {
         "add_tun_lxc_device")
             add_tun_lxc_device
             ;;
+        "zabbix_agent")
+            install_zabbix_agent
+            ;;
         *)
             echo "Unknown plugin: $1"
             ;;
     esac
 }
 
-print_interface_names() {
-    for iface in $(ls /sys/class/net | grep -v lo); do
-        echo "Interface: $iface"
-        echo "$(udevadm info -e | grep -m1 -A20 "^P.*${iface}" | grep 'ID_NET_NAME_PATH' | awk -F'=' '{print "  " $1 ": " $2}')"
-        echo "$(udevadm info -e | grep -m1 -A20 "^P.*${iface}" | grep 'ID_NET_NAME_ONBOARD' | awk -F'=' '{print "  " $1 ": " $2}')"
-    done
-    exit 0
-}
-
 # Default list of plugins
-plugin_list="update_locale_gen,set_network,run_tteck_post-pve-install,register_acme_account,disable_rpcbind,install_iptables_rule,add_ssh_key_to_authorized_keys,change_ssh_port,add_tun_lxc_device"
+plugin_list="update_locale_gen,set_network,run_tteck_post-pve-install,register_acme_account,disable_rpcbind,install_iptables_rule,add_ssh_key_to_authorized_keys,change_ssh_port,add_tun_lxc_device,zabbix_agent"
 
 # Parsing command line options
 while [[ $# -gt 0 ]]; do
     key="$1"
     case $key in
-        -v|--vnc-password)
-            vnc_password="$2"
-            shift
-            shift
-            ;;
-        -P|--port)
-            ssh_port="$2"
-            shift
-            shift
-            ;;
-        -k|--ssh-key)
-            ssh_key="$2"
-            if [[ "$ssh_key" != *.pub ]]; then
-                echo "Error: Provided SSH key file must have a .pub extension."
-                exit 1
-            fi
-            shift
-            shift
-            ;;
-        -e|--acme-email)
-            acme_email="$2"
-            shift
-            shift
-            ;;
         --skip-installer)
             skip_installer=true
             shift
@@ -177,6 +162,36 @@ while [[ $# -gt 0 ]]; do
             rescue=true
             shift
             ;;
+        --zabbix-server)
+            zabbix_server_address="$2"
+            shift
+            shift
+            ;;
+        --zabbix-agent-version)
+            zabbix_agent_version="$2"
+            shift
+            shift
+            ;;
+        --zabbix-hostname)
+            zabbix_hostname="$2"
+            shift
+            shift
+            ;;
+        -P|--port)
+            ssh_port="$2"
+            shift
+            shift
+            ;;
+        -k|--ssh-key)
+            ssh_key="$2"
+            shift
+            shift
+            ;;
+        -e|--acme-email)
+            acme_email="$2"
+            shift
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -191,6 +206,15 @@ done
 
 WAN_IFACE=$(ip route show default | awk '/default/ {print $5}')
 PUBLIC_IPV4=$(ip -f inet addr show ${WAN_IFACE} | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
+
+print_interface_names() {
+    for iface in $(ls /sys/class/net | grep -v lo); do
+        echo "Interface: $iface"
+        echo "$(udevadm info -e | grep -m1 -A20 "^P.*${iface}" | grep 'ID_NET_NAME_PATH' | awk -F'=' '{print "  " $1 ": " $2}')"
+        echo "$(udevadm info -e | grep -m1 -A20 "^P.*${iface}" | grep 'ID_NET_NAME_ONBOARD' | awk -F'=' '{print "  " $1 ": " $2}')"
+    done
+    exit 0
+}
 
 # Function to add SSH public key to authorized_keys
 add_ssh_key_to_authorized_keys() {
@@ -233,7 +257,7 @@ install_iptables_rule() {
         echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections &&
         echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections &&
         apt-get install -y iptables-persistent &&
-        iptables -I INPUT -i vmbr0 -p tcp -m tcp --dport 3128 -j DROP &&
+        iptables -I INPUT -i vmbr0 -p tcp -m tcp --dport 3128 -j DROP && iptables -I INPUT -i vmbr0 -p tcp -m tcp --dport 111 -j DROP &&
         netfilter-persistent save
     "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
@@ -252,11 +276,11 @@ update_locale_gen() {
 set_network() {
     curl -L "https://github.com/WMP/proxmox-hetzner/raw/main/files/main_vmbr0_basic_template.txt" -o ~/interfaces_sample
     
-    if [ "$specified_iface_name" ]; then
-        IFACE_NAME=$specified_iface_name
-    else
-        IFACE_NAME="$(udevadm info -e | grep -m1 -A 20 ^P.*${WAN_IFACE} | grep ID_NET_NAME_PATH | cut -d'=' -f2)"
-    fi
+    # if [ "$specified_iface_name" ]; then
+    #     IFACE_NAME=$specified_iface_name
+    # else
+    #     IFACE_NAME="$(udevadm info -e | grep -m1 -A 20 ^P.*${WAN_IFACE} | grep ID_NET_NAME_PATH | cut -d'=' -f2)"
+    # fi
 
     # Continue with setting up the network using the chosen IFACE_NAME
     MAIN_IPV4_CIDR="$(ip address show ${WAN_IFACE} | grep global | grep "inet "| xargs | cut -d" " -f2)"
@@ -480,6 +504,22 @@ EOF
 run_tteck_post-pve-install() {
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP  -t  'bash -c "$(wget -qLO - https://github.com/tteck/Proxmox/raw/main/misc/post-pve-install.sh)"'
 }
+
+# Function to install Zabbix Agent
+install_zabbix_agent() {
+    if [[ -z "$zabbix_server_address" ]]; then
+        echo "Error: zabbix_agent plugin requires --zabbix-server option."
+        exit 1
+    fi
+
+    agent_version_param=${zabbix_agent_version:+$zabbix_agent_version}
+    hostname_param=${zabbix_hostname:+$zabbix_hostname}
+
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "
+        curl -fsSL https://wmp.github.io/zabbix/install.sh | bash -s -- $zabbix_server_address $agent_version_param $hostname_param
+    " 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+}
+
 
 ## EXECUTION ##
 if ! dpkg -s qemu-system netcat-traditional ovmf >/dev/null 2>&1; then
