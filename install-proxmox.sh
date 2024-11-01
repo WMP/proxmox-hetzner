@@ -30,20 +30,24 @@ show_help() {
     echo ""
     echo "Optional plugins (additional options required):"
     
-    # Output only optional plugins with indentation
+    echo "Optional plugins (additional options required):"
     for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
-        if [[ "$(describe_plugin "$plugin")" == *"[Optional]"* ]]; then
+        # Capture description and type
+        plugin_desc=$(describe_plugin "$plugin")
+        if [[ "$plugin_type" == "Optional" ]]; then
             echo "  $plugin:"
-            describe_plugin "$plugin" true | sed 's/^/    /'
+            echo "$plugin_desc" | sed 's/^/    /'
         fi
     done
     
     echo ""
     echo "Default plugins:"
     for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
-        if [[ "$(describe_plugin "$plugin")" == *"[Default]"* ]]; then
+        # Capture description and type
+        plugin_desc=$(describe_plugin "$plugin")
+        if [[ "$plugin_type" == "Default" ]]; then
             echo "  $plugin:"
-            describe_plugin "$plugin" true | sed 's/^/    /'
+            echo "$plugin_desc" | sed 's/^/    /'
         fi
     done
 }
@@ -51,69 +55,59 @@ show_help() {
 describe_plugin() {
     case $1 in
         "run_tteck_post-pve-install")
-            echo "[Default]"
+            plugin_type="Default"
             echo "Run additional post-installation tasks from https://tteck.github.io/Proxmox/"
-            echo
             ;;
         "set_network")
-            echo "[Default]"
+            plugin_type="Default"
             echo "Configure network settings based on Hetzner rescue network"
-            echo
             ;;
         "update_locale_gen")
-            echo "[Default]"
+            plugin_type="Default"
             echo "Update locale settings with your ssh_client LC_NAME: ${LC_NAME}"
-            echo
             ;;
         "register_acme_account")
-            echo "[Optional]"
+            plugin_type="Optional"
             echo "Registers an ACME account for Let's Encrypt SSL certificate."
             echo "Required options:"
             echo "  --acme-email EMAIL     Set email for ACME account"
-            echo
             ;;
         "disable_rpcbind")
-            echo "[Default]"
+            plugin_type="Default"
             echo "Disable rpcbind service"
-            echo
             ;;
         "install_iptables_rule")
-            echo "[Default]"
+            plugin_type="Default"
             echo "Install custom iptables rule"
-            echo
             ;;
         "add_ssh_key_to_authorized_keys")
-            echo "[Optional]"
+            plugin_type="Optional"
             echo "Adds SSH public key to authorized_keys."
             echo "Required options:"
             echo "  --ssh-key SSH_KEY     Add SSH public key to authorized_keys (must be a path to .pub file)"
-            echo
             ;;
         "change_ssh_port")
-            echo "[Optional]"
+            plugin_type="Optional"
             echo "Changes the default SSH port for Proxmox server."
             echo "Required options:"
             echo "  --port PORT           Set the new SSH port"
-            echo
             ;;
         "add_tun_lxc_device")
-            echo "[Default]"
+            plugin_type="Default"
             echo "Add default configuration to LXC containers to create a tun interface"
-            echo
             ;;
         "zabbix_agent")
-            echo "[Optional]"
+            plugin_type="Optional"
             echo "Installs and configures Zabbix Agent."
             echo "Required options:"
             echo "  --zabbix-server ADDRESS     Set Zabbix Server address"
             echo "Optional parameters:"
             echo "  --zabbix-agent-version VERSION  Specify Zabbix Agent version"
             echo "  --zabbix-hostname HOSTNAME       Set hostname for Zabbix Agent"
-            echo
             ;;
         *)
+            plugin_type="Unknown"
             echo "No description available"
-            echo
             ;;
     esac
 }
