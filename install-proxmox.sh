@@ -14,46 +14,9 @@ ssh_port=""
 ssh_key=""
 acme_email=""
 
-# Function to show help message
-show_help() {
-    echo "Usage: $0 [OPTIONS]"
-    echo ""
-    echo "General options:"
-    echo "  --skip-installer              Skip Proxmox installer and boot directly from installed disks"
-    echo "  --no-shutdown                 Do not shut down the virtual machine after finishing work"
-    echo "  --rescue                      Start QEMU in rescue mode with VNC and attached disks"
-    echo "  --disable PLUGIN1,PLUGIN2     Disable specified plugins"
-    echo "  --list-ifaces                 List network interfaces and exit"
-    echo "  --iface-name NAME             Specify the network interface name directly"
-    echo "  --verbose                     Enable extra log output"
-    echo "  -h, --help                    Show this help message and exit"
-    echo ""
-    echo "Optional plugins (additional options required):"
-    
-    echo "Optional plugins (additional options required):"
-    for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
-        # Capture description and type
-        plugin_desc=$(describe_plugin "$plugin")
-        if [[ "$plugin_type" == "Optional" ]]; then
-            echo "  $plugin:"
-            echo "$plugin_desc" | sed 's/^/    /'
-        fi
-    done
-    
-    echo ""
-    echo "Default plugins:"
-    for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
-        # Capture description and type
-        plugin_desc=$(describe_plugin "$plugin")
-        if [[ "$plugin_type" == "Default" ]]; then
-            echo "  $plugin:"
-            echo "$plugin_desc" | sed 's/^/    /'
-        fi
-    done
-}
-
 describe_plugin() {
-    case $1 in
+    local plugin=$1
+    case $plugin in
         "run_tteck_post-pve-install")
             plugin_type="Default"
             echo "Run additional post-installation tasks from https://tteck.github.io/Proxmox/"
@@ -110,6 +73,44 @@ describe_plugin() {
             echo "No description available"
             ;;
     esac
+}
+
+show_help() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "General options:"
+    echo "  --skip-installer              Skip Proxmox installer and boot directly from installed disks"
+    echo "  --no-shutdown                 Do not shut down the virtual machine after finishing work"
+    echo "  --rescue                      Start QEMU in rescue mode with VNC and attached disks"
+    echo "  --disable PLUGIN1,PLUGIN2     Disable specified plugins"
+    echo "  --list-ifaces                 List network interfaces and exit"
+    echo "  --iface-name NAME             Specify the network interface name directly"
+    echo "  --verbose                     Enable extra log output"
+    echo "  -h, --help                    Show this help message and exit"
+    echo ""
+
+    echo "Optional plugins (additional options required):"
+    for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
+        plugin_desc=$(describe_plugin "$plugin")
+        
+        # If the plugin is optional, display it under the Optional section
+        if [[ "$plugin_type" == "Optional" ]]; then
+            echo "  $plugin:"
+            echo "$plugin_desc" | sed 's/^/    /'
+        fi
+    done
+    
+    echo ""
+    echo "Default plugins:"
+    for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
+        plugin_desc=$(describe_plugin "$plugin")
+        
+        # If the plugin is default, display it under the Default section
+        if [[ "$plugin_type" == "Default" ]]; then
+            echo "  $plugin:"
+            echo "$plugin_desc" | sed 's/^/    /'
+        fi
+    done
 }
 
 
