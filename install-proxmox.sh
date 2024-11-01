@@ -32,13 +32,13 @@ show_help() {
     
     # Output only optional plugins with required parameters
     for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
-        [[ "$(describe_plugin "$plugin")" == *"[Optional]"* ]] && echo "  $plugin: $(describe_plugin "$plugin")"
+        [[ "$(describe_plugin "$plugin" true)" == *"[Optional]"* ]] && echo "  $plugin: $(describe_plugin "$plugin")"
     done
     
     echo ""
     echo "Default plugins:"
     for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
-        [[ "$(describe_plugin "$plugin")" == *"[Default]"* ]] && echo "  $plugin: $(describe_plugin "$plugin")"
+        [[ "$(describe_plugin "$plugin" true)" == *"[Default]"* ]] && echo "  $plugin: $(describe_plugin "$plugin")"
     done
 }
 
