@@ -388,7 +388,7 @@ if [ -n "\$INTERFACE" ]; then
     sed -i "s/#IFACE_NAME#/\$INTERFACE/" /etc/network/interfaces
 
     # Start the network initialization unit
-    systemctl start systemd-networkd
+    # systemctl start systemd-networkd
 else
     echo "No network interface found with MAC \$TARGET_MAC"
     exit 1
