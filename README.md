@@ -12,7 +12,7 @@
 
 ---
 
-# Install Proxmox on Hetzner Dedicated Server with QEMU
+# Install Proxmox on Hetzner and OVH Dedicated Server with QEMU
 
 - [Install Proxmox on Hetzner Dedicated Server with QEMU](#install-proxmox-on-hetzner-dedicated-server-with-qemu)
   - [Prepare the rescue from hetzner robot manager](#prepare-the-rescue-from-hetzner-robot-manager)
