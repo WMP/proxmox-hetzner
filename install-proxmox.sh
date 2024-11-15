@@ -72,6 +72,10 @@ describe_plugin() {
             echo "[Default]"
             echo "Disable rpcbind service"
             ;;
+        "snat_zone")
+            echo "[Default]"
+            echo "Install dnsmasq to run SNAT zone"
+            ;;
         "install_iptables_rule")
             echo "[Default]"
             echo "Install custom iptables rule"
@@ -130,6 +134,9 @@ run_plugin() {
         "install_iptables_rule")
             install_iptables_rule
             ;;
+        "snat_zone")
+            snat_zone
+            ;;
         "add_ssh_key_to_authorized_keys")
             add_ssh_key_to_authorized_keys
             ;;
@@ -149,7 +156,7 @@ run_plugin() {
 }
 
 # Default list of plugins
-plugin_list="update_locale_gen,set_network,run_tteck_post-pve-install,register_acme_account,disable_rpcbind,install_iptables_rule,add_ssh_key_to_authorized_keys,change_ssh_port,add_tun_lxc_device,zabbix_agent"
+plugin_list="update_locale_gen,set_network,run_tteck_post-pve-install,register_acme_account,disable_rpcbind,install_iptables_rule,snat_zone,add_ssh_key_to_authorized_keys,change_ssh_port,add_tun_lxc_device,zabbix_agent"
 
 # Parsing command line options
 while [[ $# -gt 0 ]]; do
@@ -277,6 +284,13 @@ change_ssh_port() {
 disable_rpcbind() {
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "systemctl disable --now rpcbind rpcbind.socket && systemctl mask rpcbind"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
     echo "rpcbind disabled on proxmox server."
+}
+
+snat_zone() {
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
+        apt-get install -y dnsmasq
+        systemctl disable --now dnsmasq
+    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 install_iptables_rule() {
