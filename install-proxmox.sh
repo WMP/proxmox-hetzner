@@ -654,13 +654,13 @@ done < <(lsblk -o NAME -d -n -p | grep -v 'loop' | grep -v 'sr')
 
 latest_machine=$(qemu-system-x86_64 -machine help | grep -oP "pc-q35-\d+\.\d+" | sort -V | tail -n 1)
 
+if [ ! -n "$vnc_password" ]; then
+    # Generate random VNC password
+    vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+fi
+
 # Build the QEMU command with VNC and mounted disks if --rescue is specified
 if [ "$rescue" = true ]; then
-    if [ ! -n "$vnc_password" ]; then
-        # Generate random VNC password
-        vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
-    fi
-
     # Construct the QEMU command in rescue mode
     echo "Starting QEMU in rescue mode with VNC access"
     echo
@@ -744,12 +744,12 @@ if [ "$use_ovh" = true ]; then
   fi
 
   # Construct QEMU command with bridge networking
-  qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host \
-  -netdev bridge,id=net0,br=$BRIDGE_NAME -device virtio-net-pci,netdev=net0 -smp 4 -m 4096"
+  qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host \
+  -netdev bridge,id=net0,br=$BRIDGE_NAME -device virtio-net-pci,netdev=net0 -smp 4 -m 4096 -vnc :0,password -monitor stdio"
 else
   # Default QEMU command with user networking
-  qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host \
-  -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 -smp 4 -m 4096"
+  qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host \
+  -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 -smp 4 -m 4096 -vnc :0,password -monitor stdio"
 fi
 
 for disk in "${hard_disks[@]}"; do
