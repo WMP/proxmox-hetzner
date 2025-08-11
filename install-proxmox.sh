@@ -52,7 +52,7 @@ describe_plugin() {
     case $1 in
         "run_tteck_post-pve-install")
             echo "[Default]"
-            echo "Run additional post-installation tasks from https://tteck.github.io/Proxmox/"
+            echo "Run additional post-installation tasks from https://github.com/community-scripts/ProxmoxVE"
             ;;
         "set_network")
             echo "[Default]"
@@ -315,7 +315,7 @@ update_locale_gen() {
 }
 
 set_network() {
-    curl -L "https://github.com/WMP/proxmox-hetzner/raw/main/files/main_vmbr0_basic_template.txt" -o ~/interfaces_sample
+    curl -L "https://raw.githubusercontent.com/WMP/proxmox-hetzner/refs/heads/main/files/main_vmbr0_basic_template.txt" -o ~/interfaces_sample
     
     # if [ "$specified_iface_name" ]; then
     #     IFACE_NAME=$specified_iface_name
@@ -558,6 +558,7 @@ register_acme_account() {
 }
 
 add_tun_lxc_device() {
+    mkdir -p /usr/share/lxc/config/common.conf.d
     touch /usr/share/lxc/config/common.conf.d/10-tun.conf
     cat <<EOF >/usr/share/lxc/config/common.conf.d/10-tun.conf
 lxc.cgroup2.devices.allow = c 10:200 rwm
@@ -568,8 +569,9 @@ EOF
 }
 
 run_tteck_post-pve-install() {
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP  -t  'bash -c "$(wget -qLO - https://github.com/tteck/Proxmox/raw/main/misc/post-pve-install.sh)"'
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP  -t  'bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/post-pve-install.sh)"'
 }
+
 
 # Function to install Zabbix Agent
 install_zabbix_agent() {
