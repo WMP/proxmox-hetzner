@@ -24,6 +24,14 @@ acme_email=""
 private_subnet=""
 no_color=false
 proxmox_version="latest"
+automated_install=false
+# Automated install parameters
+pve_fqdn=""
+pve_email=""
+pve_timezone="Europe/Warsaw"
+pve_root_password=""
+pve_keyboard="en-us"
+pve_country="us"
 
 # Function to show help message
 show_help() {
@@ -40,6 +48,17 @@ show_help() {
     echo "  --no-color                    Disable colored output"
     echo "  --proxmox-version VERSION     Specify Proxmox version (default: latest)"
     echo "                                Examples: latest, 8, 8.2, 8.2-1"
+    echo "  --automated-install           [EXPERIMENTAL] Use automated unattended installation"
+    echo "                                Only works with Proxmox 9+, skips VNC manual setup"
+    echo ""
+    echo "Automated install options (required with --automated-install):"
+    echo "  --pve-fqdn FQDN               Fully qualified domain name (e.g., pve.example.com)"
+    echo "  --pve-email EMAIL             Admin email address"
+    echo "  --pve-root-password PASSWORD  Root password for Proxmox"
+    echo "  --pve-timezone TIMEZONE       Timezone (default: Europe/Warsaw)"
+    echo "  --pve-keyboard LAYOUT         Keyboard layout (default: en-us)"
+    echo "  --pve-country CODE            Country code (default: us)"
+    echo ""
     echo "  -h, --help                    Show this help message and exit"
     echo ""
     echo "Optional plugins (additional options required):"
@@ -60,6 +79,20 @@ show_help() {
             describe_plugin "$plugin" true | sed 's/^/    /' | tail -n +2
         fi
     done
+
+    echo ""
+    echo "Examples:"
+    echo "  # Standard manual installation (VNC):"
+    echo "  $0"
+    echo ""
+    echo "  # Automated installation (Proxmox 9+ only, no VNC needed):"
+    echo "  $0 --automated-install --proxmox-version 9 \\"
+    echo "     --pve-fqdn pve.example.com \\"
+    echo "     --pve-email admin@example.com \\"
+    echo "     --pve-root-password SecurePass123"
+    echo ""
+    echo "  # Install specific version with custom network interface:"
+    echo "  $0 --proxmox-version 8.2-1 --iface-name enp0s31f6"
 }
 
 describe_plugin() {
@@ -263,6 +296,40 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
+        --automated-install)
+            automated_install=true
+            shift
+            ;;
+        --pve-fqdn)
+            pve_fqdn="$2"
+            shift
+            shift
+            ;;
+        --pve-email)
+            pve_email="$2"
+            shift
+            shift
+            ;;
+        --pve-root-password)
+            pve_root_password="$2"
+            shift
+            shift
+            ;;
+        --pve-timezone)
+            pve_timezone="$2"
+            shift
+            shift
+            ;;
+        --pve-keyboard)
+            pve_keyboard="$2"
+            shift
+            shift
+            ;;
+        --pve-country)
+            pve_country="$2"
+            shift
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -283,6 +350,58 @@ if [ "$no_color" = true ] || [ ! -t 1 ]; then
     CLR_BLUE=''
     CLR_CYAN=''
     CLR_RESET=''
+fi
+
+# Validate automated install requirements
+if [ "$automated_install" = true ]; then
+    echo -e "${CLR_YELLOW}⚠ WARNING: Automated install is EXPERIMENTAL${CLR_RESET}"
+    echo -e "${CLR_YELLOW}This feature uses Proxmox auto-install-assistant (Proxmox 9+ only)${CLR_RESET}"
+
+    # Check if version is Proxmox 9+
+    if [[ "$proxmox_version" =~ ^[0-9]+$ ]]; then
+        if [ "$proxmox_version" -lt 9 ]; then
+            echo -e "${CLR_RED}✗ Error: --automated-install requires Proxmox 9 or higher${CLR_RESET}"
+            echo "Current version selection: $proxmox_version"
+            echo "Use --proxmox-version 9 or --proxmox-version latest"
+            exit 1
+        fi
+    elif [[ "$proxmox_version" =~ ^[0-9]+\.[0-9]+ ]]; then
+        major_ver=$(echo "$proxmox_version" | cut -d'.' -f1)
+        if [ "$major_ver" -lt 9 ]; then
+            echo -e "${CLR_RED}✗ Error: --automated-install requires Proxmox 9 or higher${CLR_RESET}"
+            echo "Current version selection: $proxmox_version"
+            exit 1
+        fi
+    fi
+    echo -e "${CLR_GREEN}✓ Proxmox version check passed${CLR_RESET}"
+
+    # Validate required parameters
+    missing_params=()
+    [ -z "$pve_fqdn" ] && missing_params+=("--pve-fqdn")
+    [ -z "$pve_email" ] && missing_params+=("--pve-email")
+    [ -z "$pve_root_password" ] && missing_params+=("--pve-root-password")
+
+    if [ ${#missing_params[@]} -gt 0 ]; then
+        echo -e "${CLR_RED}✗ Error: --automated-install requires the following parameters:${CLR_RESET}"
+        for param in "${missing_params[@]}"; do
+            echo "  $param"
+        done
+        exit 1
+    fi
+
+    # Validate email format
+    if ! echo "$pve_email" | grep -qE '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'; then
+        echo -e "${CLR_RED}✗ Error: Invalid email format: $pve_email${CLR_RESET}"
+        exit 1
+    fi
+
+    # Validate FQDN format (at least one dot)
+    if ! echo "$pve_fqdn" | grep -q '\.'; then
+        echo -e "${CLR_RED}✗ Error: FQDN must contain at least one dot (e.g., pve.example.com)${CLR_RESET}"
+        exit 1
+    fi
+
+    echo -e "${CLR_GREEN}✓ Required parameters validated${CLR_RESET}"
 fi
 
 WAN_IFACE=$(ip route show default | awk '/default/ {print $5}')
@@ -522,6 +641,78 @@ EOF
     " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
+# Function to generate answer.toml for automated Proxmox installation
+generate_answer_toml() {
+    local toml_file="$1"
+
+    echo -e "${CLR_CYAN}Generating answer.toml for automated installation${CLR_RESET}"
+
+    # Determine disk device (usually /dev/sda in QEMU, but could be nvme)
+    local disk_device="/dev/sda"
+    if [ -b /dev/vda ]; then
+        disk_device="/dev/vda"  # QEMU virtio
+    elif [ -b /dev/nvme0n1 ]; then
+        disk_device="/dev/nvme0n1"  # NVMe
+    fi
+
+    # Determine filesystem type based on UEFI mode
+    local filesystem="ext4"
+    if is_uefi_mode; then
+        filesystem="ext4"  # UEFI recommends ext4
+    else
+        filesystem="ext4"  # Legacy BIOS also uses ext4
+    fi
+
+    # Get network configuration from set_network variables
+    local gateway="${MAIN_IPV4_GATEWAY}"
+    local cidr="${MAIN_IPV4_CIDR}"
+    local interface="${MAIN_IFACE_NAME}"
+
+    # DNS servers based on platform
+    local dns1 dns2
+    if [ "$use_ovh" = true ]; then
+        dns1="213.186.33.99"
+        dns2="8.8.8.8"
+    else
+        dns1="185.12.64.1"
+        dns2="185.12.64.2"
+    fi
+
+    # Create answer.toml
+    cat > "$toml_file" <<EOF
+[global]
+keyboard = "$pve_keyboard"
+country = "$pve_country"
+fqdn = "$pve_fqdn"
+mailto = "$pve_email"
+timezone = "$pve_timezone"
+root_password = "$pve_root_password"
+root_ssh_keys = []
+
+[network]
+source = "from-answer"
+cidr = "$cidr"
+dns = "$dns1"
+gateway = "$gateway"
+filter_match = "mac"
+filter_value = "$MAIN_MAC_ADDR"
+
+[disk-setup]
+filesystem = "$filesystem"
+disk_list = ["$disk_device"]
+zfs_opts = ""
+lvm_opts = ""
+btrfs_opts = ""
+EOF
+
+    echo -e "${CLR_GREEN}✓ Generated answer.toml${CLR_RESET}"
+
+    if [ "$verbose" = true ]; then
+        echo "Answer.toml contents:"
+        cat "$toml_file"
+    fi
+}
+
 # Function to check if system is booted in UEFI mode
 is_uefi_mode() {
     [ -d /sys/firmware/efi ]
@@ -592,6 +783,49 @@ download_latest_proxmox_iso() {
         echo -e "${CLR_GREEN}✓ Downloaded the latest ISO image: $latest_iso_name${CLR_RESET}"
     else
         echo -e "${CLR_RED}✗ Error downloading the ISO image.${CLR_RESET}"
+        exit 1
+    fi
+}
+
+# Function to create auto-install ISO using proxmox-auto-install-assistant
+create_autoinstall_iso() {
+    local source_iso="$1"
+    local answer_toml="$2"
+    local output_iso="${source_iso%.iso}-auto.iso"
+
+    echo -e "${CLR_CYAN}Creating auto-install ISO from $source_iso${CLR_RESET}"
+
+    # Check if proxmox-auto-install-assistant is available
+    if ! command -v proxmox-auto-install-assistant &> /dev/null; then
+        echo -e "${CLR_YELLOW}⚠ proxmox-auto-install-assistant not found, installing...${CLR_RESET}"
+
+        # Mount the ISO to extract the assistant tool
+        mkdir -p /mnt/pve-iso
+        mount -o loop "$source_iso" /mnt/pve-iso
+
+        # The assistant is usually in the ISO
+        if [ -f /mnt/pve-iso/proxmox-auto-install-assistant ]; then
+            cp /mnt/pve-iso/proxmox-auto-install-assistant /usr/local/bin/
+            chmod +x /usr/local/bin/proxmox-auto-install-assistant
+            echo -e "${CLR_GREEN}✓ Installed proxmox-auto-install-assistant${CLR_RESET}"
+        else
+            umount /mnt/pve-iso
+            echo -e "${CLR_RED}✗ Error: proxmox-auto-install-assistant not found in ISO${CLR_RESET}"
+            echo "This feature requires Proxmox 9.0 or higher"
+            exit 1
+        fi
+
+        umount /mnt/pve-iso
+    fi
+
+    # Create the auto-install ISO
+    echo -e "${CLR_CYAN}Running proxmox-auto-install-assistant...${CLR_RESET}"
+
+    if proxmox-auto-install-assistant prepare-iso "$source_iso" --answer-file "$answer_toml" --output "$output_iso"; then
+        echo -e "${CLR_GREEN}✓ Created auto-install ISO: $output_iso${CLR_RESET}"
+        echo "$output_iso"
+    else
+        echo -e "${CLR_RED}✗ Error creating auto-install ISO${CLR_RESET}"
         exit 1
     fi
 }
@@ -848,20 +1082,49 @@ if [ "$skip_installer" = false ]; then
     # Call the function to download the latest Proxmox ISO
     download_latest_proxmox_iso
 
-    if [ ! -n "$vnc_password" ]; then
-        # Generate random VNC password
-        vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+    # Generate auto-install ISO if automated install is enabled
+    if [ "$automated_install" = true ]; then
+        echo -e "${CLR_CYAN}Preparing automated installation${CLR_RESET}"
+
+        # Generate answer.toml
+        answer_toml="/tmp/answer.toml"
+        generate_answer_toml "$answer_toml"
+
+        # Create auto-install ISO
+        auto_iso=$(create_autoinstall_iso "$latest_iso_name" "$answer_toml")
+
+        # Use the auto-install ISO for installation
+        install_iso="$auto_iso"
+
+        echo -e "${CLR_GREEN}✓ Automated installation prepared${CLR_RESET}"
+        echo -e "${CLR_YELLOW}Starting automated installation (no VNC interaction needed)${CLR_RESET}"
+        echo
+    else
+        # Use regular ISO for manual VNC installation
+        install_iso="$latest_iso_name"
+
+        if [ ! -n "$vnc_password" ]; then
+            # Generate random VNC password
+            vnc_password=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+        fi
+
+        echo
+        echo "Connecto to vnc://$PUBLIC_IPV4:5900 with password: $vnc_password"
+        echo "If VNC stuck before open installator, try to reconnect VNC client"
+        echo
+        echo "In the network settings window, make sure to set the correct hostname and DO NOT change the IP addresses. There IP addresses are needed only for the system installation process."
+        echo
     fi
 
-    echo
-    echo "Connecto to vnc://$PUBLIC_IPV4:5900 with password: $vnc_password"
-    echo "If VNC stuck before open installator, try to reconnect VNC client"
-    echo
-    echo "In the network settings window, make sure to set the correct hostname and DO NOT change the IP addresses. There IP addresses are needed only for the system installation process."
-    echo
-
     # Building QEMU command with detected hard disks
-    qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $latest_iso_name -vnc :0,password -monitor stdio -no-reboot"
+    if [ "$automated_install" = true ]; then
+        # Automated install - no VNC password needed, runs in background
+        qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $install_iso -nographic -serial mon:stdio -no-reboot"
+    else
+        # Manual install - VNC with password
+        qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $install_iso -vnc :0,password -monitor stdio -no-reboot"
+    fi
+
     for disk in "${hard_disks[@]}"; do
         qemu_command+=" -drive file=$disk,format=raw,media=disk,if=virtio"
     done
