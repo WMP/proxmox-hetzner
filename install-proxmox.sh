@@ -29,7 +29,7 @@ show_help() {
     echo "  -h, --help                    Show this help message and exit"
     echo ""
     echo "Optional plugins (additional options required):"
-    
+
     # Output only optional plugins with indentation
     for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
         if [[ "$(describe_plugin "$plugin")" == *"[Optional]"* ]]; then
@@ -37,7 +37,7 @@ show_help() {
             describe_plugin "$plugin" true | sed 's/^/    /' | tail -n +2
         fi
     done
-    
+
     echo ""
     echo "Default plugins:"
     for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
@@ -255,11 +255,11 @@ add_ssh_key_to_authorized_keys() {
     if [ -n "$ssh_key" ]; then
         if [ -f "$ssh_key" ]; then
             # Copy SSH key to local host via scp
-            if ssh-copy-id -f -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$ssh_key" -p $SSHPORT root@$SSHIP 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"; then
+            if ssh-copy-id -f -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$ssh_key" -p $SSHPORT root@$SSHIP 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"; then
                 echo "Added SSH public key to authorized_keys"
-                
+
                 # Disable password authentication for SSH
-                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "sed -i 's/^PasswordAuthentication yes$/PasswordAuthentication no/' /etc/ssh/sshd_config" 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "sed -i 's/^PasswordAuthentication yes$/PasswordAuthentication no/' /etc/ssh/sshd_config" 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
                 echo "Password authentication disabled for SSH"
             else
                 echo "Error: Failed to copy SSH public key to authorized_keys."
@@ -274,15 +274,22 @@ add_ssh_key_to_authorized_keys() {
 
 
 change_ssh_port() {
-    if [ -n "$ssh_port" ]; then
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "sed -i 's/^#Port.*$/Port $ssh_port/' /etc/ssh/sshd_config"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "echo 'Port $ssh_port' >> /root/.ssh/config"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
-        echo "SSH port changed to $ssh_port on proxmox server."
+    if [ -z "$ssh_port" ]; then
+        return 0  # Opcjonalny parametr, brak = skip
     fi
+
+    if ! [[ "$ssh_port" =~ ^[0-9]+$ ]] || [ "$ssh_port" -lt 1 ] || [ "$ssh_port" -gt 65535 ]; then
+        echo "Error: Invalid SSH port '$ssh_port'. Must be a number between 1-65535."
+        exit 1
+    fi
+
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "sed -i 's/^#Port.*$/Port $ssh_port/' /etc/ssh/sshd_config"  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "echo 'Port $ssh_port' >> /root/.ssh/config"  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    echo "SSH port changed to $ssh_port on proxmox server."
 }
 
 disable_rpcbind() {
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "systemctl disable --now rpcbind rpcbind.socket && systemctl mask rpcbind"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "systemctl disable --now rpcbind rpcbind.socket && systemctl mask rpcbind"  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
     echo "rpcbind disabled on proxmox server."
 }
 
@@ -290,7 +297,7 @@ snat_zone() {
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
         apt-get install -y dnsmasq
         systemctl disable --now dnsmasq
-    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    "  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 install_iptables_rule() {
@@ -300,7 +307,7 @@ install_iptables_rule() {
         apt-get install -y iptables-persistent &&
         iptables -I INPUT -i vmbr0 -p tcp -m tcp --dport 3128 -j DROP && iptables -I INPUT -i vmbr0 -p tcp -m tcp --dport 111 -j DROP &&
         netfilter-persistent save
-    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    "  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 update_locale_gen() {
@@ -311,12 +318,12 @@ update_locale_gen() {
             echo \"Updated /etc/locale.gen and generated locales for \$LC_NAME\"
         fi
         update-locale LANG=en_US.UTF-8
-    "  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    "  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 set_network() {
     curl -L "https://raw.githubusercontent.com/WMP/proxmox-hetzner/refs/heads/main/files/main_vmbr0_basic_template.txt" -o ~/interfaces_sample
-    
+
     # if [ "$specified_iface_name" ]; then
     #     IFACE_NAME=$specified_iface_name
     # else
@@ -375,10 +382,10 @@ set_network() {
     fi
 
     # Apply the configuration
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT ~/interfaces_sample root@$SSHIP:/etc/network/interfaces  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT ~/interfaces_sample root@$SSHIP:/etc/network/interfaces  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
     # Configure DNS on the remote machine
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "printf 'nameserver $DNS1\nnameserver $DNS2\n' > /etc/resolv.conf; sed -i 's/10.0.2.15/$PUBLIC_IPV4/' /etc/hosts;"  2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "printf 'nameserver $DNS1\nnameserver $DNS2\n' > /etc/resolv.conf; sed -i 's/10.0.2.15/$PUBLIC_IPV4/' /etc/hosts;"  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
     configure_network_interface
 }
@@ -417,7 +424,7 @@ EOF
     chmod +x /root/configure_network_interface.sh
 
     # Transfer the configuration script to the remote server
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /root/configure_network_interface.sh $SSHIP:/root/configure_network_interface.sh 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /root/configure_network_interface.sh $SSHIP:/root/configure_network_interface.sh 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
     # Create the systemd service file locally
     cat <<EOF > /etc/systemd/system/configure-network-interface.service
@@ -439,13 +446,13 @@ WantedBy=multi-user.target
 EOF
 
     # Transfer the systemd service file to the remote server
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /etc/systemd/system/configure-network-interface.service $SSHIP:/etc/systemd/system/configure-network-interface.service 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /etc/systemd/system/configure-network-interface.service $SSHIP:/etc/systemd/system/configure-network-interface.service 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
     # Enable the service remotely
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
         chmod +x /root/configure_network_interface.sh
         systemctl enable configure-network-interface.service
-    " 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 
@@ -478,6 +485,7 @@ download_latest_proxmox_iso() {
         echo "Downloaded the latest ISO image: $latest_iso_name"
     else
         echo "Error downloading the ISO image."
+        exit 1
     fi
 }
 
@@ -520,7 +528,7 @@ check_dns_record() {
 # Check DNS record, order ACME certificate if matching, and clean up
 if check_dns_record; then
     pvenode acme cert order
-    
+
     # Remove the cron job and cleanup the script
     rm -f /etc/cron.d/acme_certificate_order_cron
     rm -f /root/acme_certificate_order_script.sh
@@ -529,13 +537,13 @@ EOF
 
     # Make the script executable and copy it to the remote server
     chmod +x /root/acme_certificate_order_script.sh
-    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /root/acme_certificate_order_script.sh $SSHIP:/root/acme_certificate_order_script.sh 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P $SSHPORT /root/acme_certificate_order_script.sh $SSHIP:/root/acme_certificate_order_script.sh 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
     # Set up cron to run the script every minute and log output
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
         echo -e \"* * * * * root /root/acme_certificate_order_script.sh > /var/log/acme_certificate_order_script.log 2>&1\n\" > /etc/cron.d/acme_certificate_order_cron && \
         chmod 644 /etc/cron.d/acme_certificate_order_cron
-    " 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 
@@ -544,28 +552,34 @@ register_acme_account() {
     # Exit the function if acme_email is not set
     [ -z "$acme_email" ] && return 1
 
-    ssh -o CheckHostIP=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP " 
-        apt update && apt install -y expect && 
+    # Prosta walidacja email
+    if ! [[ "$acme_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        echo "Error: Invalid email format '$acme_email'"
+        exit 1
+    fi
+
+    ssh -o CheckHostIP=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP "
+        apt update && apt install -y expect &&
         expect -c \"
             spawn pvenode acme account register default $acme_email --directory https://acme-v02.api.letsencrypt.org/directory
             expect -re {Do you agree}
             send \"y\\\r\"
             interact
-        \" && pvenode config set --acme domains=\$(hostname -f) 
-    "  2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
-    
+        \" && pvenode config set --acme domains=\$(hostname -f)
+    "  2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+
     order_acme_certificate
 }
 
 add_tun_lxc_device() {
-    mkdir -p /usr/share/lxc/config/common.conf.d
-    touch /usr/share/lxc/config/common.conf.d/10-tun.conf
-    cat <<EOF >/usr/share/lxc/config/common.conf.d/10-tun.conf
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "
+        mkdir -p /usr/share/lxc/config/common.conf.d
+        cat <<'EOF' >/usr/share/lxc/config/common.conf.d/10-tun.conf
 lxc.cgroup2.devices.allow = c 10:200 rwm
-lxc.hook.pre-start = sh -c "/usr/sbin/modprobe tun && [ ! -e /dev/net/tun-lxc ] && /usr/bin/mknod /dev/net/tun-lxc c 10 200 || true && /usr/bin/chown 100000:100000 /dev/net/tun-lxc"
+lxc.hook.pre-start = sh -c \"/usr/sbin/modprobe tun && [ ! -e /dev/net/tun-lxc ] && /usr/bin/mknod /dev/net/tun-lxc c 10 200 || true && /usr/bin/chown 100000:100000 /dev/net/tun-lxc\"
 lxc.mount.entry = /dev/net/tun-lxc dev/net/tun none bind,create=file
 EOF
-
+    " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 run_tteck_post-pve-install() {
@@ -580,12 +594,18 @@ install_zabbix_agent() {
         exit 1
     fi
 
+    # Walidacja czy to IP lub hostname (prosta walidacja)
+    if ! [[ "$zabbix_server_address" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]]; then
+        echo "Error: Invalid zabbix server address format '$zabbix_server_address'"
+        exit 1
+    fi
+
     agent_version_param=${zabbix_agent_version:+$zabbix_agent_version}
     hostname_param=${zabbix_hostname:+$zabbix_hostname}
 
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "
         curl -fsSL https://wmp.github.io/zabbix/install.sh | bash -s -- $zabbix_server_address $agent_version_param $hostname_param
-    " 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
 
@@ -619,7 +639,7 @@ fi
 if [ "$verbose" = true ]; then
     # Array to store disk information as text
     hard_disks_text=()
-    
+
     # Read disk information using lsblk and store it in the array
     first_line=true
     while read -r line; do
@@ -629,7 +649,7 @@ if [ "$verbose" = true ]; then
         fi
         hard_disks_text+=("$line")
     done < <(lsblk -o NAME,SIZE,SERIAL,VENDOR,MODEL,PARTTYPE -d -p | grep -v 'loop' | grep -v 'sr')
-    
+
     # Add a column with device path /dev/vd*
     device_path="/dev/vd"
     counter=97  # ASCII code for 'a'
@@ -642,7 +662,7 @@ if [ "$verbose" = true ]; then
         hard_disks_text[$i]="${hard_disks_text[$i]} $device_path$(printf "\x$(printf %x $counter)")"
         ((counter++))
     done
-    
+
     echo "Disk mapping table:"
     for disk_info in "${hard_disks_text[@]}"; do
         echo "$disk_info"
@@ -671,12 +691,12 @@ if [ "$rescue" = true ]; then
     echo
 
     qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -vnc :0,password -monitor stdio -no-reboot"
-    
+
     # Mount each detected hard disk
     for disk in "${hard_disks[@]}"; do
         qemu_command+=" -drive file=$disk,format=raw,media=disk,if=virtio"
     done
-    
+
     # Run the rescue QEMU command
     if [ "$verbose" = true ]; then
         echo "$qemu_command"
@@ -715,7 +735,7 @@ if [ "$skip_installer" = false ]; then
         eval "$qemu_command"
     else
         eval "$qemu_command > /dev/null 2>&1"
-    fi    
+    fi
 fi
 
 # Set up bridge networking if --ovh is specified
@@ -764,7 +784,7 @@ if [ "$verbose" = true ]; then
     eval "$qemu_command &"
 else
     eval "$qemu_command > /dev/null 2>&1 &"
-fi  
+fi
 
 bg_pid=$!
 
@@ -774,14 +794,14 @@ if [ ! -f /root/.ssh/id_rsa ]; then
 fi
 
 echo "Waiting for start SSH server on proxmox..."
-check_ssh_server || echo "Fatal: Proxmox may not have started properly because SSH on socket $SSHIP:$SSHPORT is not working."
+check_ssh_server || { echo "Fatal: Proxmox may not have started properly because SSH on socket $SSHIP:$SSHPORT is not working."; exit 1; }
 echo
 echo "Please enter the password for the root user that you set during the Proxmox installation."
 echo "Remember not to select the reboot option in the 'run_tteck_post-pve-install' plugin!"
 echo
 
-ssh-copy-id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP -C exit 2>&1 | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+ssh-copy-id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP -C exit 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 
 
 # Run enabled plugins
@@ -792,5 +812,5 @@ done
 # Shut down the virtual machine if --no-shutdown option is not used
 if [ "$no_shutdown" = false ]; then
     echo "Shutting down the virtual machine..."
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "poweroff" 2>&1  | egrep -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "poweroff" 2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 fi
