@@ -546,7 +546,7 @@ download_latest_proxmox_iso() {
         if ! echo "$iso_list" | grep -q "$latest_iso_name"; then
             echo -e "${CLR_RED}✗ Error: Proxmox version $proxmox_version not found${CLR_RESET}"
             echo "Available versions:"
-            echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sed 's/proxmox-ve_/  /' | sed 's/\.iso//'
+            echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sed 's/proxmox-ve_/  /' | sed 's/\.iso//' | sort -uV
             exit 1
         fi
     elif [[ "$proxmox_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
@@ -555,7 +555,7 @@ download_latest_proxmox_iso() {
         if [ -z "$latest_iso_name" ]; then
             echo -e "${CLR_RED}✗ Error: No Proxmox version matching $proxmox_version found${CLR_RESET}"
             echo "Available versions:"
-            echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sed 's/proxmox-ve_/  /' | sed 's/\.iso//'
+            echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sed 's/proxmox-ve_/  /' | sed 's/\.iso//' | sort -uV
             exit 1
         fi
     elif [[ "$proxmox_version" =~ ^[0-9]+$ ]]; then
@@ -564,7 +564,7 @@ download_latest_proxmox_iso() {
         if [ -z "$latest_iso_name" ]; then
             echo -e "${CLR_RED}✗ Error: No Proxmox version matching $proxmox_version found${CLR_RESET}"
             echo "Available versions:"
-            echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sed 's/proxmox-ve_/  /' | sed 's/\.iso//'
+            echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sed 's/proxmox-ve_/  /' | sed 's/\.iso//' | sort -uV
             exit 1
         fi
     else
