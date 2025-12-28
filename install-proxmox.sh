@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Color codes (can be disabled with --no-color)
+CLR_RED='\033[0;31m'
+CLR_GREEN='\033[0;32m'
+CLR_YELLOW='\033[1;33m'
+CLR_BLUE='\033[0;34m'
+CLR_CYAN='\033[0;36m'
+CLR_RESET='\033[0m'
+
 # Default variables
 skip_installer=false
 no_shutdown=false
@@ -13,6 +21,8 @@ zabbix_hostname=""
 ssh_port=""
 ssh_key=""
 acme_email=""
+private_subnet=""
+no_color=false
 
 # Function to show help message
 show_help() {
@@ -26,6 +36,7 @@ show_help() {
     echo "  --list-ifaces                 List network interfaces and exit"
     echo "  --iface-name NAME             Specify the network interface name directly"
     echo "  --verbose                     Enable extra log output"
+    echo "  --no-color                    Disable colored output"
     echo "  -h, --help                    Show this help message and exit"
     echo ""
     echo "Optional plugins (additional options required):"
@@ -105,6 +116,12 @@ describe_plugin() {
             echo "    --zabbix-agent-version VERSION   Specify Zabbix Agent version"
             echo "    --zabbix-hostname HOSTNAME       Set hostname for Zabbix Agent"
             ;;
+        "setup_private_subnet")
+            echo "[Optional]"
+            echo "Configures private subnet bridge (vmbr1) with NAT for LXC/VM containers."
+            echo "Required options:"
+            echo "    --private-subnet CIDR            Set private subnet (e.g., 192.168.20.0/24)"
+            ;;
         *)
             echo "No description available"
             echo
@@ -149,6 +166,9 @@ run_plugin() {
         "zabbix_agent")
             install_zabbix_agent
             ;;
+        "setup_private_subnet")
+            setup_private_subnet
+            ;;
         *)
             echo "Unknown plugin: $1"
             ;;
@@ -156,7 +176,7 @@ run_plugin() {
 }
 
 # Default list of plugins
-plugin_list="update_locale_gen,set_network,run_tteck_post-pve-install,register_acme_account,disable_rpcbind,install_iptables_rule,snat_zone,add_ssh_key_to_authorized_keys,change_ssh_port,add_tun_lxc_device,zabbix_agent"
+plugin_list="update_locale_gen,set_network,run_tteck_post-pve-install,register_acme_account,disable_rpcbind,install_iptables_rule,snat_zone,add_ssh_key_to_authorized_keys,change_ssh_port,add_tun_lxc_device,zabbix_agent,setup_private_subnet"
 
 # Parsing command line options
 while [[ $# -gt 0 ]]; do
@@ -192,8 +212,17 @@ while [[ $# -gt 0 ]]; do
             verbose=true
             shift
             ;;
+        --no-color)
+            no_color=true
+            shift
+            ;;
         --rescue)
             rescue=true
+            shift
+            ;;
+        --private-subnet)
+            private_subnet="$2"
+            shift
             shift
             ;;
         --zabbix-server)
@@ -238,15 +267,45 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Disable colors if requested or if not in terminal
+if [ "$no_color" = true ] || [ ! -t 1 ]; then
+    CLR_RED=''
+    CLR_GREEN=''
+    CLR_YELLOW=''
+    CLR_BLUE=''
+    CLR_CYAN=''
+    CLR_RESET=''
+fi
+
 WAN_IFACE=$(ip route show default | awk '/default/ {print $5}')
 PUBLIC_IPV4=$(ip -f inet addr show ${WAN_IFACE} | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
 
 print_interface_names() {
+    echo "Available network interfaces:"
+    echo "================================"
+
     for iface in $(ls /sys/class/net | grep -v lo); do
+        echo ""
         echo "Interface: $iface"
-        echo "$(udevadm info -e | grep -m1 -A20 "^P.*${iface}" | grep 'ID_NET_NAME_PATH' | awk -F'=' '{print "  " $1 ": " $2}')"
-        echo "$(udevadm info -e | grep -m1 -A20 "^P.*${iface}" | grep 'ID_NET_NAME_ONBOARD' | awk -F'=' '{print "  " $1 ": " $2}')"
+
+        # MAC address
+        mac=$(cat /sys/class/net/${iface}/address 2>/dev/null)
+        [ -n "$mac" ] && echo "  MAC: $mac"
+
+        # Alternative names (altnames)
+        altnames=$(ip -d link show $iface 2>/dev/null | grep -oP 'altname \K[^ ]+' | tr '\n' ',' | sed 's/,$//')
+        [ -n "$altnames" ] && echo "  Altnames: $altnames"
+
+        # Path-based name
+        path_name=$(udevadm info -e 2>/dev/null | grep -m1 -A20 "^P.*${iface}" | grep 'ID_NET_NAME_PATH' | awk -F'=' '{print $2}')
+        [ -n "$path_name" ] && echo "  Path name: $path_name"
+
+        # Onboard name
+        onboard_name=$(udevadm info -e 2>/dev/null | grep -m1 -A20 "^P.*${iface}" | grep 'ID_NET_NAME_ONBOARD' | awk -F'=' '{print $2}')
+        [ -n "$onboard_name" ] && echo "  Onboard name: $onboard_name"
     done
+
+    echo ""
     exit 0
 }
 
@@ -256,11 +315,11 @@ add_ssh_key_to_authorized_keys() {
         if [ -f "$ssh_key" ]; then
             # Copy SSH key to local host via scp
             if ssh-copy-id -f -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$ssh_key" -p $SSHPORT root@$SSHIP 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"; then
-                echo "Added SSH public key to authorized_keys"
+                echo -e "${CLR_GREEN}✓ Added SSH public key to authorized_keys${CLR_RESET}"
 
                 # Disable password authentication for SSH
                 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "sed -i 's/^PasswordAuthentication yes$/PasswordAuthentication no/' /etc/ssh/sshd_config" 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
-                echo "Password authentication disabled for SSH"
+                echo -e "${CLR_GREEN}✓ Password authentication disabled for SSH${CLR_RESET}"
             else
                 echo "Error: Failed to copy SSH public key to authorized_keys."
                 exit 1
@@ -285,12 +344,12 @@ change_ssh_port() {
 
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "sed -i 's/^#Port.*$/Port $ssh_port/' /etc/ssh/sshd_config"  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "echo 'Port $ssh_port' >> /root/.ssh/config"  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
-    echo "SSH port changed to $ssh_port on proxmox server."
+    echo -e "${CLR_GREEN}✓ SSH port changed to $ssh_port on proxmox server${CLR_RESET}"
 }
 
 disable_rpcbind() {
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "systemctl disable --now rpcbind rpcbind.socket && systemctl mask rpcbind"  2>&1  | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
-    echo "rpcbind disabled on proxmox server."
+    echo -e "${CLR_GREEN}✓ rpcbind disabled on proxmox server${CLR_RESET}"
 }
 
 snat_zone() {
@@ -455,7 +514,10 @@ EOF
     " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
-
+# Function to check if system is booted in UEFI mode
+is_uefi_mode() {
+    [ -d /sys/firmware/efi ]
+}
 
 # Function to download the latest Proxmox ISO if not already downloaded
 download_latest_proxmox_iso() {
@@ -466,7 +528,7 @@ download_latest_proxmox_iso() {
     iso_list=$(curl -s "$ISO_URL")
 
     # Extracting the name of the latest ISO file
-    latest_iso_name=$(echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sort -r | head -n 1 | sed 's/">proxmox-ve.*//')
+    latest_iso_name=$(echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sort -V | tail -n 1)
 
     # Check if ISO already exists
     if [ -f "$latest_iso_name" ]; then
@@ -482,9 +544,9 @@ download_latest_proxmox_iso() {
     fi
 
     if [ $? -eq 0 ]; then
-        echo "Downloaded the latest ISO image: $latest_iso_name"
+        echo -e "${CLR_GREEN}✓ Downloaded the latest ISO image: $latest_iso_name${CLR_RESET}"
     else
-        echo "Error downloading the ISO image."
+        echo -e "${CLR_RED}✗ Error downloading the ISO image.${CLR_RESET}"
         exit 1
     fi
 }
@@ -587,6 +649,36 @@ run_tteck_post-pve-install() {
 }
 
 
+setup_private_subnet() {
+    [ -z "$private_subnet" ] && return 0
+
+    echo -e "${CLR_CYAN}Configuring private subnet: $private_subnet${CLR_RESET}"
+
+    # Calculate network details
+    PRIVATE_CIDR=$(echo "$private_subnet" | cut -d'/' -f1 | rev | cut -d'.' -f2- | rev)
+    PRIVATE_IP="${PRIVATE_CIDR}.1"
+    SUBNET_MASK=$(echo "$private_subnet" | cut -d'/' -f2)
+
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "
+        cat >> /etc/network/interfaces <<'EOF'
+
+# Private subnet bridge
+auto vmbr1
+iface vmbr1 inet static
+    address ${PRIVATE_IP}/${SUBNET_MASK}
+    bridge-ports none
+    bridge-stp off
+    bridge-fd 0
+    post-up   iptables -t nat -A POSTROUTING -s '${private_subnet}' -o vmbr0 -j MASQUERADE
+    post-down iptables -t nat -D POSTROUTING -s '${private_subnet}' -o vmbr0 -j MASQUERADE
+    post-up   iptables -t raw -I PREROUTING -i fwbr+ -j CT --zone 1
+    post-down iptables -t raw -D PREROUTING -i fwbr+ -j CT --zone 1
+EOF
+    " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+
+    echo -e "${CLR_GREEN}✓ Private subnet configured on vmbr1${CLR_RESET}"
+}
+
 # Function to install Zabbix Agent
 install_zabbix_agent() {
     if [[ -z "$zabbix_server_address" ]]; then
@@ -629,7 +721,7 @@ else
 fi
 
 # Detecting EFI/UEFI system
-if [ -d "/sys/firmware/efi" ]; then
+if is_uefi_mode; then
     bios="-bios /usr/share/ovmf/OVMF.fd"
 else
     bios=""
@@ -793,8 +885,8 @@ if [ ! -f /root/.ssh/id_rsa ]; then
     ssh-keygen -b 2048 -t rsa -f /root/.ssh/id_rsa -q -N ""
 fi
 
-echo "Waiting for start SSH server on proxmox..."
-check_ssh_server || { echo "Fatal: Proxmox may not have started properly because SSH on socket $SSHIP:$SSHPORT is not working."; exit 1; }
+echo -e "${CLR_CYAN}Waiting for start SSH server on proxmox...${CLR_RESET}"
+check_ssh_server || { echo -e "${CLR_RED}✗ Fatal: Proxmox may not have started properly because SSH on socket $SSHIP:$SSHPORT is not working.${CLR_RESET}"; exit 1; }
 echo
 echo "Please enter the password for the root user that you set during the Proxmox installation."
 echo "Remember not to select the reboot option in the 'run_tteck_post-pve-install' plugin!"
