@@ -23,6 +23,7 @@ ssh_key=""
 acme_email=""
 private_subnet=""
 no_color=false
+proxmox_version="latest"
 
 # Function to show help message
 show_help() {
@@ -37,6 +38,8 @@ show_help() {
     echo "  --iface-name NAME             Specify the network interface name directly"
     echo "  --verbose                     Enable extra log output"
     echo "  --no-color                    Disable colored output"
+    echo "  --proxmox-version VERSION     Specify Proxmox version (default: latest)"
+    echo "                                Examples: latest, 8, 8.2, 8.2-1"
     echo "  -h, --help                    Show this help message and exit"
     echo ""
     echo "Optional plugins (additional options required):"
@@ -252,6 +255,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         -e|--acme-email)
             acme_email="$2"
+            shift
+            shift
+            ;;
+        --proxmox-version)
+            proxmox_version="$2"
             shift
             shift
             ;;
@@ -527,8 +535,41 @@ download_latest_proxmox_iso() {
     # Fetching the list of ISO images
     iso_list=$(curl -s "$ISO_URL")
 
-    # Extracting the name of the latest ISO file
-    latest_iso_name=$(echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sort -V | tail -n 1)
+    # Extracting the name of the ISO file based on version specification
+    if [ "$proxmox_version" = "latest" ]; then
+        # Get the absolute latest version
+        latest_iso_name=$(echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sort -V | tail -n 1)
+    elif [[ "$proxmox_version" =~ ^[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+        # Exact version specified (e.g., 8.2-1)
+        latest_iso_name="proxmox-ve_${proxmox_version}.iso"
+        # Verify it exists in the list
+        if ! echo "$iso_list" | grep -q "$latest_iso_name"; then
+            echo -e "${CLR_RED}✗ Error: Proxmox version $proxmox_version not found${CLR_RESET}"
+            echo "Available versions:"
+            echo "$iso_list" | grep -oE 'proxmox-ve_[0-9]+\.[0-9]+-[0-9]+\.iso' | sed 's/proxmox-ve_/  /' | sed 's/\.iso//'
+            exit 1
+        fi
+    elif [[ "$proxmox_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        # Minor version specified (e.g., 8.2) - get latest patch
+        latest_iso_name=$(echo "$iso_list" | grep -oE "proxmox-ve_${proxmox_version}-[0-9]+\.iso" | sort -V | tail -n 1)
+        if [ -z "$latest_iso_name" ]; then
+            echo -e "${CLR_RED}✗ Error: No Proxmox version matching $proxmox_version found${CLR_RESET}"
+            exit 1
+        fi
+    elif [[ "$proxmox_version" =~ ^[0-9]+$ ]]; then
+        # Major version specified (e.g., 8) - get latest minor.patch
+        latest_iso_name=$(echo "$iso_list" | grep -oE "proxmox-ve_${proxmox_version}\.[0-9]+-[0-9]+\.iso" | sort -V | tail -n 1)
+        if [ -z "$latest_iso_name" ]; then
+            echo -e "${CLR_RED}✗ Error: No Proxmox version matching $proxmox_version found${CLR_RESET}"
+            exit 1
+        fi
+    else
+        echo -e "${CLR_RED}✗ Error: Invalid version format '$proxmox_version'${CLR_RESET}"
+        echo "Valid formats: latest, 8, 8.2, 8.2-1"
+        exit 1
+    fi
+
+    echo -e "${CLR_CYAN}Selected Proxmox version: $latest_iso_name${CLR_RESET}"
 
     # Check if ISO already exists
     if [ -f "$latest_iso_name" ]; then
