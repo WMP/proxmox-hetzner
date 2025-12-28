@@ -689,6 +689,10 @@ generate_answer_toml() {
         dns2="185.12.64.2"
     fi
 
+    # Extract last 12 hex chars from MAC address (removes colons)
+    # MAC format: aa:bb:cc:dd:ee:ff -> filter needs last 6 bytes: *ddeeff (without colons)
+    local mac_filter="*$(echo "$MAIN_MAC_ADDR" | tr -d ':' | tail -c 13)"
+
     # Create answer.toml with proper UDEV filter syntax for network interface
     cat > "$toml_file" <<EOF
 [global]
@@ -705,9 +709,7 @@ source = "from-answer"
 cidr = "$cidr"
 dns = "$dns1"
 gateway = "$gateway"
-
-[network.filter]
-IFNAME = "$interface"
+filter.ID_NET_NAME_MAC = "$mac_filter"
 
 [disk-setup]
 filesystem = "$pve_filesystem"
