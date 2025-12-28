@@ -32,6 +32,7 @@ pve_timezone="Europe/Warsaw"
 pve_root_password=""
 pve_keyboard="en-us"
 pve_country="us"
+pve_filesystem="ext4"
 
 # Function to show help message
 show_help() {
@@ -58,6 +59,7 @@ show_help() {
     echo "  --pve-timezone TIMEZONE       Timezone (default: Europe/Warsaw)"
     echo "  --pve-keyboard LAYOUT         Keyboard layout (default: en-us)"
     echo "  --pve-country CODE            Country code (default: us)"
+    echo "  --pve-filesystem TYPE         Filesystem type: ext4, xfs, zfs, btrfs (default: ext4)"
     echo ""
     echo "  -h, --help                    Show this help message and exit"
     echo ""
@@ -330,6 +332,11 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
+        --pve-filesystem)
+            pve_filesystem="$2"
+            shift
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -400,6 +407,18 @@ if [ "$automated_install" = true ]; then
         echo -e "${CLR_RED}✗ Error: FQDN must contain at least one dot (e.g., pve.example.com)${CLR_RESET}"
         exit 1
     fi
+
+    # Validate filesystem type
+    case "$pve_filesystem" in
+        ext4|xfs|zfs|btrfs)
+            # Valid filesystem
+            ;;
+        *)
+            echo -e "${CLR_RED}✗ Error: Invalid filesystem type: $pve_filesystem${CLR_RESET}"
+            echo "Valid options: ext4, xfs, zfs, btrfs"
+            exit 1
+            ;;
+    esac
 
     echo -e "${CLR_GREEN}✓ Required parameters validated${CLR_RESET}"
 fi
@@ -655,14 +674,6 @@ generate_answer_toml() {
         disk_device="/dev/nvme0n1"  # NVMe
     fi
 
-    # Determine filesystem type based on UEFI mode
-    local filesystem="ext4"
-    if is_uefi_mode; then
-        filesystem="ext4"  # UEFI recommends ext4
-    else
-        filesystem="ext4"  # Legacy BIOS also uses ext4
-    fi
-
     # Get network configuration from set_network variables
     local gateway="${MAIN_IPV4_GATEWAY}"
     local cidr="${MAIN_IPV4_CIDR}"
@@ -678,7 +689,7 @@ generate_answer_toml() {
         dns2="185.12.64.2"
     fi
 
-    # Create answer.toml
+    # Create answer.toml with proper UDEV filter syntax for network interface
     cat > "$toml_file" <<EOF
 [global]
 keyboard = "$pve_keyboard"
@@ -694,15 +705,13 @@ source = "from-answer"
 cidr = "$cidr"
 dns = "$dns1"
 gateway = "$gateway"
-filter_match = "mac"
-filter_value = "$MAIN_MAC_ADDR"
+
+[network.filter]
+IFNAME = "$interface"
 
 [disk-setup]
-filesystem = "$filesystem"
+filesystem = "$pve_filesystem"
 disk_list = ["$disk_device"]
-zfs_opts = ""
-lvm_opts = ""
-btrfs_opts = ""
 EOF
 
     echo -e "${CLR_GREEN}✓ Generated answer.toml${CLR_RESET}"
