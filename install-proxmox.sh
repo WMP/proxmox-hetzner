@@ -33,6 +33,8 @@ pve_root_password=""
 pve_keyboard="en-us"
 pve_country="us"
 pve_filesystem="ext4"
+pve_zfs_raid="raid1"
+pve_disk_list=""
 
 # Function to show help message
 show_help() {
@@ -60,6 +62,10 @@ show_help() {
     echo "  --pve-keyboard LAYOUT         Keyboard layout (default: en-us)"
     echo "  --pve-country CODE            Country code (default: us)"
     echo "  --pve-filesystem TYPE         Filesystem type: ext4, xfs, zfs, btrfs (default: ext4)"
+    echo "  --pve-zfs-raid LEVEL          ZFS RAID level: raid0, raid1, raid10, raidz-1, raidz-2, raidz-3"
+    echo "                                (default: raid1, only used with --pve-filesystem zfs)"
+    echo "  --pve-disk-list DISKS         Comma-separated list of physical disks (e.g., sda,sdb)"
+    echo "                                Leave empty for auto-detection (default: auto)"
     echo ""
     echo "  -h, --help                    Show this help message and exit"
     echo ""
@@ -92,6 +98,12 @@ show_help() {
     echo "     --pve-fqdn pve.example.com \\"
     echo "     --pve-email admin@example.com \\"
     echo "     --pve-root-password SecurePass123"
+    echo ""
+    echo "  # Automated installation with ZFS RAID1 on two disks:"
+    echo "  $0 --automated-install --proxmox-version 9 \\"
+    echo "     --pve-fqdn pve.example.com --pve-email admin@example.com \\"
+    echo "     --pve-root-password SecurePass123 --pve-filesystem zfs \\"
+    echo "     --pve-zfs-raid raid1 --pve-disk-list sda,sdb"
     echo ""
     echo "  # Install specific version with custom network interface:"
     echo "  $0 --proxmox-version 8.2-1 --iface-name enp0s31f6"
@@ -337,6 +349,16 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
+        --pve-zfs-raid)
+            pve_zfs_raid="$2"
+            shift
+            shift
+            ;;
+        --pve-disk-list)
+            pve_disk_list="$2"
+            shift
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -419,6 +441,20 @@ if [ "$automated_install" = true ]; then
             exit 1
             ;;
     esac
+
+    # Validate ZFS RAID level if ZFS is selected
+    if [ "$pve_filesystem" = "zfs" ]; then
+        case "$pve_zfs_raid" in
+            raid0|raid1|raid10|raidz-1|raidz-2|raidz-3)
+                # Valid ZFS RAID level
+                ;;
+            *)
+                echo -e "${CLR_RED}✗ Error: Invalid ZFS RAID level: $pve_zfs_raid${CLR_RESET}"
+                echo "Valid options: raid0, raid1, raid10, raidz-1, raidz-2, raidz-3"
+                exit 1
+                ;;
+        esac
+    fi
 
     echo -e "${CLR_GREEN}✓ Required parameters validated${CLR_RESET}"
 fi
@@ -666,12 +702,29 @@ generate_answer_toml() {
 
     echo -e "${CLR_CYAN}Generating answer.toml for automated installation${CLR_RESET}"
 
-    # Determine disk device (usually /dev/sda in QEMU, but could be nvme)
-    local disk_device="/dev/sda"
-    if [ -b /dev/vda ]; then
-        disk_device="/dev/vda"  # QEMU virtio
-    elif [ -b /dev/nvme0n1 ]; then
-        disk_device="/dev/nvme0n1"  # NVMe
+    # Map physical disk names to QEMU virtio names
+    # Physical disks (sda, sdb, nvme0n1, etc.) are passed to QEMU as virtio: vda, vdb, vdc...
+    local disk_list_toml=""
+
+    if [ -n "$pve_disk_list" ]; then
+        # User provided disk list - map to virtio devices
+        # Count number of disks being passed to QEMU from hard_disks array
+        local disk_index=0
+        local toml_disks=()
+
+        IFS=',' read -ra USER_DISKS <<< "$pve_disk_list"
+        for user_disk in "${USER_DISKS[@]}"; do
+            # Map to virtio device: first disk -> vda, second -> vdb, etc.
+            local virt_letter=$(printf "\x$(printf %x $((97 + disk_index)))")  # 97 = 'a' in ASCII
+            toml_disks+=("/dev/vd${virt_letter}")
+            ((disk_index++))
+        done
+
+        # Format as TOML array
+        disk_list_toml=$(printf '"%s", ' "${toml_disks[@]}" | sed 's/, $//')
+    else
+        # Auto-detection: use first virtio disk
+        disk_list_toml="/dev/vda"
     fi
 
     # Get network configuration from set_network variables
@@ -713,8 +766,15 @@ filter.ID_NET_NAME_MAC = "$mac_filter"
 
 [disk-setup]
 filesystem = "$pve_filesystem"
-disk_list = ["$disk_device"]
+disk_list = [$disk_list_toml]
 EOF
+
+    # Add ZFS-specific configuration if ZFS is selected
+    if [ "$pve_filesystem" = "zfs" ]; then
+        cat >> "$toml_file" <<EOF
+zfs.raid = "$pve_zfs_raid"
+EOF
+    fi
 
     echo -e "${CLR_GREEN}✓ Generated answer.toml${CLR_RESET}"
 
