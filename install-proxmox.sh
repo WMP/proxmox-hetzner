@@ -15,6 +15,7 @@ verbose=false
 specified_iface_name=""
 use_ovh=false
 rescue=false
+yes_to_all=false
 zabbix_server_address=""
 zabbix_agent_version=""
 zabbix_hostname=""
@@ -49,6 +50,7 @@ show_help() {
     echo "  --iface-name NAME             Specify the network interface name directly"
     echo "  --verbose                     Enable extra log output"
     echo "  --no-color                    Disable colored output"
+    echo "  --yes                         Skip all confirmation prompts (auto-accept)"
     echo "  --proxmox-version VERSION     Specify Proxmox version (default: latest)"
     echo "                                Examples: latest, 8, 8.2, 8.2-1"
     echo "  --automated-install           [EXPERIMENTAL] Use automated unattended installation"
@@ -264,6 +266,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-color)
             no_color=true
+            shift
+            ;;
+        --yes)
+            yes_to_all=true
             shift
             ;;
         --rescue)
@@ -696,6 +702,99 @@ EOF
     " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
 }
 
+# Function to show block devices with detailed information
+show_block_devices() {
+    echo -e "${CLR_CYAN}=== Block Devices ===${CLR_RESET}"
+    echo ""
+
+    # Show detailed information using lsblk
+    if command -v lsblk &> /dev/null; then
+        lsblk -o NAME,SIZE,TYPE,MODEL,SERIAL,WWN | grep -v loop || true
+    fi
+
+    echo ""
+    echo -e "${CLR_CYAN}=== Detailed Disk Information ===${CLR_RESET}"
+
+    # Additional details from /sys
+    for disk in /sys/block/sd* /sys/block/nvme*; do
+        [ -e "$disk" ] || continue
+        disk_name=$(basename "$disk")
+
+        echo ""
+        echo "Device: /dev/$disk_name"
+
+        # Size
+        if [ -f "$disk/size" ]; then
+            size_sectors=$(cat "$disk/size")
+            size_gb=$((size_sectors * 512 / 1024 / 1024 / 1024))
+            echo "  Size: ${size_gb}GB"
+        fi
+
+        # Model
+        if [ -f "$disk/device/model" ]; then
+            model=$(cat "$disk/device/model" | tr -d ' ')
+            echo "  Model: $model"
+        fi
+
+        # Vendor
+        if [ -f "$disk/device/vendor" ]; then
+            vendor=$(cat "$disk/device/vendor" | tr -d ' ')
+            echo "  Vendor: $vendor"
+        fi
+
+        # Serial
+        if [ -f "$disk/device/serial" ]; then
+            serial=$(cat "$disk/device/serial")
+            echo "  Serial: $serial"
+        fi
+
+        # WWN
+        if [ -f "$disk/device/wwid" ]; then
+            wwn=$(cat "$disk/device/wwid")
+            echo "  WWN: $wwn"
+        fi
+    done
+
+    echo ""
+}
+
+# Function to show network interfaces with detailed information
+show_network_interfaces() {
+    echo -e "${CLR_CYAN}=== Network Interfaces ===${CLR_RESET}"
+    echo ""
+
+    for iface in $(ls /sys/class/net | grep -v lo); do
+        echo "Interface: $iface"
+
+        # MAC address
+        if [ -f /sys/class/net/$iface/address ]; then
+            mac=$(cat /sys/class/net/$iface/address)
+            echo "  MAC: $mac"
+        fi
+
+        # Speed
+        if [ -f /sys/class/net/$iface/speed ]; then
+            speed=$(cat /sys/class/net/$iface/speed 2>/dev/null)
+            [ -n "$speed" ] && [ "$speed" != "-1" ] && echo "  Speed: ${speed}Mbps"
+        fi
+
+        # Driver
+        if [ -L /sys/class/net/$iface/device/driver ]; then
+            driver=$(basename $(readlink /sys/class/net/$iface/device/driver))
+            echo "  Driver: $driver"
+        fi
+
+        # PCI ID
+        if [ -f /sys/class/net/$iface/device/vendor ]; then
+            vendor=$(cat /sys/class/net/$iface/device/vendor)
+            device=$(cat /sys/class/net/$iface/device/device 2>/dev/null)
+            echo "  PCI: $vendor:$device"
+        fi
+
+        echo ""
+    done
+}
+
 # Function to generate answer.toml for automated Proxmox installation
 generate_answer_toml() {
     local toml_file="$1"
@@ -746,6 +845,12 @@ generate_answer_toml() {
     # MAC format: aa:bb:cc:dd:ee:ff -> filter needs last 6 bytes: *ddeeff (without colons)
     local mac_filter="*$(echo "$MAIN_MAC_ADDR" | tr -d ':' | tail -c 13)"
 
+    # Read SSH public key if it exists
+    local ssh_pub_key=""
+    if [ -f /root/.ssh/id_rsa.pub ]; then
+        ssh_pub_key=$(cat /root/.ssh/id_rsa.pub)
+    fi
+
     # Create answer.toml with proper UDEV filter syntax for network interface
     cat > "$toml_file" <<EOF
 [global]
@@ -755,7 +860,23 @@ fqdn = "$pve_fqdn"
 mailto = "$pve_email"
 timezone = "$pve_timezone"
 root_password = "$pve_root_password"
+EOF
+
+    # Add SSH keys if available
+    if [ -n "$ssh_pub_key" ]; then
+        cat >> "$toml_file" <<EOF
+root_ssh_keys = [
+    "$ssh_pub_key"
+]
+EOF
+    else
+        cat >> "$toml_file" <<EOF
 root_ssh_keys = []
+EOF
+    fi
+
+    # Continue with network and disk setup
+    cat >> "$toml_file" <<EOF
 
 [network]
 source = "from-answer"
@@ -1156,10 +1277,47 @@ if [ "$skip_installer" = false ]; then
     # Generate auto-install ISO if automated install is enabled
     if [ "$automated_install" = true ]; then
         echo -e "${CLR_CYAN}Preparing automated installation${CLR_RESET}"
+        echo ""
+
+        # Generate SSH key if it doesn't exist (needed for root-ssh-keys in answer.toml)
+        if [ ! -f /root/.ssh/id_rsa ]; then
+            echo -e "${CLR_CYAN}Generating SSH key pair...${CLR_RESET}"
+            mkdir -p /root/.ssh
+            ssh-keygen -b 2048 -t rsa -f /root/.ssh/id_rsa -q -N ""
+            echo -e "${CLR_GREEN}✓ SSH key generated${CLR_RESET}"
+        fi
+
+        # Show hardware information
+        show_block_devices
+        show_network_interfaces
 
         # Generate answer.toml
         answer_toml="/tmp/answer.toml"
         generate_answer_toml "$answer_toml"
+
+        # Display generated TOML
+        echo -e "${CLR_CYAN}=== Generated answer.toml ===${CLR_RESET}"
+        echo ""
+        cat "$answer_toml"
+        echo ""
+
+        # Ask for confirmation unless --yes is specified
+        if [ "$yes_to_all" = false ]; then
+            echo -e "${CLR_YELLOW}Review the configuration above.${CLR_RESET}"
+            echo -e "${CLR_YELLOW}This will perform an automated installation on the selected disks.${CLR_RESET}"
+            echo -e "${CLR_RED}WARNING: All data on the selected disks will be erased!${CLR_RESET}"
+            echo ""
+            read -p "Do you want to continue? (yes/no): " confirmation
+
+            if [ "$confirmation" != "yes" ] && [ "$confirmation" != "y" ]; then
+                echo -e "${CLR_RED}Installation cancelled by user${CLR_RESET}"
+                exit 0
+            fi
+        else
+            echo -e "${CLR_YELLOW}Skipping confirmation (--yes flag)${CLR_RESET}"
+        fi
+
+        echo ""
 
         # Create auto-install ISO
         auto_iso=$(create_autoinstall_iso "$latest_iso_name" "$answer_toml")
