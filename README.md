@@ -61,6 +61,24 @@ reboot
 - After a few minutes, login again to your proxmox server with ssh on port `22` or the port you gave the install script.
 - Make sure to change the hostname file to reflect your public ip from hetzner.
 
+### Automated Installation (Proxmox 9+)
+
+For a fully unattended installation without VNC interaction, use the `--automated-install` flag:
+
+```shell
+bash install-proxmox.sh --automated-install --proxmox-version 9 \
+   --pve-fqdn pve.example.com \
+   --pve-email admin@example.com \
+   --pve-root-password SecurePass123 \
+   --pve-filesystem zfs --pve-zfs-raid raid1 \
+   --pve-disk-list sda,sdb --yes
+```
+
+This uses the Proxmox `auto-install-assistant` to generate an answer file and create a custom ISO. VNC is available for optional monitoring during installation.
+
+**Tested on:**
+- Proxmox VE 9.1 on OVH Advanced-1
+
 ### Useful network configs
 
 - For `private subnet` append these lines to interface file  :

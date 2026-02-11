@@ -53,7 +53,7 @@ show_help() {
     echo "  --yes                         Skip all confirmation prompts (auto-accept)"
     echo "  --proxmox-version VERSION     Specify Proxmox version (default: latest)"
     echo "                                Examples: latest, 8, 8.2, 8.2-1"
-    echo "  --automated-install           [EXPERIMENTAL] Use automated unattended installation"
+    echo "  --automated-install           Use automated unattended installation"
     echo "                                Only works with Proxmox 9+, skips VNC manual setup"
     echo ""
     echo "Automated install options (required with --automated-install):"
@@ -389,8 +389,7 @@ fi
 
 # Validate automated install requirements
 if [ "$automated_install" = true ]; then
-    echo -e "${CLR_YELLOW}⚠ WARNING: Automated install is EXPERIMENTAL${CLR_RESET}"
-    echo -e "${CLR_YELLOW}This feature uses Proxmox auto-install-assistant (Proxmox 9+ only)${CLR_RESET}"
+    echo -e "${CLR_CYAN}Automated install using Proxmox auto-install-assistant (Proxmox 9+ only)${CLR_RESET}"
 
     # Check if version is Proxmox 9+
     if [[ "$proxmox_version" =~ ^[0-9]+$ ]]; then
@@ -826,25 +825,21 @@ generate_answer_toml() {
         disk_list_toml="/dev/vda"
     fi
 
-    # Get network configuration from set_network variables
-    local gateway="${MAIN_IPV4_GATEWAY}"
-    local cidr="${MAIN_IPV4_CIDR}"
-    local interface="${MAIN_IFACE_NAME}"
-
-    # DNS servers based on platform
-    local dns1 dns2
+    # Get network configuration
+    # On OVH, use temporary private IP for installation (bridge 10.0.2.0/24)
+    # The real public IP will be configured later by set_network plugin
+    local gateway cidr dns1 dns2
     if [ "$use_ovh" = true ]; then
+        gateway="10.0.2.2"
+        cidr="10.0.2.15/24"
         dns1="213.186.33.99"
         dns2="8.8.8.8"
     else
+        gateway="${MAIN_IPV4_GW}"
+        cidr="${MAIN_IPV4_CIDR}"
         dns1="185.12.64.1"
         dns2="185.12.64.2"
     fi
-
-    # Extract last 12 hex chars from MAC address (removes colons)
-    # MAC format: aa:bb:cc:dd:ee:ff -> filter needs last 6 bytes: *ddeeff (without colons)
-    local mac_filter="*$(echo "$MAIN_MAC_ADDR" | tr -d ':' | tail -c 13)"
-
     # Read SSH public key if it exists
     local ssh_pub_key=""
     if [ -f /root/.ssh/id_rsa.pub ]; then
@@ -883,7 +878,7 @@ source = "from-answer"
 cidr = "$cidr"
 dns = "$dns1"
 gateway = "$gateway"
-filter.ID_NET_NAME_MAC = "$mac_filter"
+filter.ID_NET_NAME = "en*"
 
 [disk-setup]
 filesystem = "$pve_filesystem"
@@ -958,17 +953,21 @@ download_latest_proxmox_iso() {
 
     echo -e "${CLR_CYAN}Selected Proxmox version: $latest_iso_name${CLR_RESET}"
 
+    # Store ISO in /tmp (tmpfs with plenty of space)
+    latest_iso_name="/tmp/$latest_iso_name"
+
     # Check if ISO already exists
     if [ -f "$latest_iso_name" ]; then
         echo "ISO already exists at $latest_iso_name"
         return
     fi
 
-    echo "Downloading the latest ISO file"
+    echo "Downloading the latest ISO file to $latest_iso_name"
+    local iso_filename=$(basename "$latest_iso_name")
     if curl --help all | grep -q -- --remove-on-error; then
-        curl --remove-on-error -o "$latest_iso_name" "$ISO_URL/$latest_iso_name"
+        curl -f --remove-on-error -o "$latest_iso_name" "$ISO_URL/$iso_filename"
     else
-        curl -o "$latest_iso_name" "$ISO_URL/$latest_iso_name"
+        curl -f -o "$latest_iso_name" "$ISO_URL/$iso_filename"
     fi
 
     if [ $? -eq 0 ]; then
@@ -983,57 +982,59 @@ download_latest_proxmox_iso() {
 create_autoinstall_iso() {
     local source_iso="$1"
     local answer_toml="$2"
-    local output_iso="${source_iso%.iso}-auto.iso"
+    local output_iso="/tmp/$(basename "${source_iso%.iso}-auto.iso")"
 
-    echo -e "${CLR_CYAN}Creating auto-install ISO from $source_iso${CLR_RESET}"
+    echo -e "${CLR_CYAN}Creating auto-install ISO from $source_iso${CLR_RESET}" >&2
 
     # Check if proxmox-auto-install-assistant is available
     if ! command -v proxmox-auto-install-assistant &> /dev/null; then
-        echo -e "${CLR_YELLOW}⚠ proxmox-auto-install-assistant not found, installing...${CLR_RESET}"
+        echo -e "${CLR_YELLOW}⚠ proxmox-auto-install-assistant not found, installing from Proxmox repository...${CLR_RESET}" >&2
 
-        # Mount the ISO to extract the assistant tool
-        mkdir -p /mnt/pve-iso
-        mount -o loop "$source_iso" /mnt/pve-iso
+        # Determine Debian codename for the Proxmox repo
+        local codename
+        codename=$(grep -oP 'VERSION_CODENAME=\K\w+' /etc/os-release 2>/dev/null || echo "bookworm")
 
-        # The assistant is usually in the ISO
-        if [ -f /mnt/pve-iso/proxmox-auto-install-assistant ]; then
-            cp /mnt/pve-iso/proxmox-auto-install-assistant /usr/local/bin/
-            chmod +x /usr/local/bin/proxmox-auto-install-assistant
-            echo -e "${CLR_GREEN}✓ Installed proxmox-auto-install-assistant${CLR_RESET}"
+        # Add Proxmox repository temporarily
+        echo "deb [trusted=yes] http://download.proxmox.com/debian/pve ${codename} pve-no-subscription" > /etc/apt/sources.list.d/pve-temp.list
+        apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/pve-temp.list -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" -qq >&2
+
+        if apt-get install -y -qq proxmox-auto-install-assistant >&2 2>&1; then
+            echo -e "${CLR_GREEN}✓ Installed proxmox-auto-install-assistant${CLR_RESET}" >&2
         else
-            umount /mnt/pve-iso
-            echo -e "${CLR_RED}✗ Error: proxmox-auto-install-assistant not found in ISO${CLR_RESET}"
-            echo "This feature requires Proxmox 9.0 or higher"
-            exit 1
+            rm -f /etc/apt/sources.list.d/pve-temp.list
+            echo -e "${CLR_RED}✗ Error: Failed to install proxmox-auto-install-assistant${CLR_RESET}" >&2
+            echo "This feature requires Proxmox 8.2+ or 9.0+ ISO and the proxmox-auto-install-assistant package" >&2
+            return 1
         fi
-
-        umount /mnt/pve-iso
     fi
 
     # Create the auto-install ISO
-    echo -e "${CLR_CYAN}Running proxmox-auto-install-assistant...${CLR_RESET}"
+    echo -e "${CLR_CYAN}Running proxmox-auto-install-assistant...${CLR_RESET}" >&2
 
-    if proxmox-auto-install-assistant prepare-iso "$source_iso" --answer-file "$answer_toml" --output "$output_iso"; then
-        echo -e "${CLR_GREEN}✓ Created auto-install ISO: $output_iso${CLR_RESET}"
+    if proxmox-auto-install-assistant prepare-iso "$source_iso" --fetch-from iso --answer-file "$answer_toml" --tmp /tmp --output "$output_iso" >&2; then
+        echo -e "${CLR_GREEN}✓ Created auto-install ISO: $output_iso${CLR_RESET}" >&2
         echo "$output_iso"
     else
-        echo -e "${CLR_RED}✗ Error creating auto-install ISO${CLR_RESET}"
-        exit 1
+        echo -e "${CLR_RED}✗ Error creating auto-install ISO${CLR_RESET}" >&2
+        return 1
     fi
 }
 
-# Function to check if SSH server is up with a timeout of 60 seconds
+# Function to check if SSH server is up and ready for connections
 check_ssh_server() {
     local server="$SSHIP"
     local port="$SSHPORT"
-    local timeout=60
+    local timeout=120
     local end_time=$((SECONDS + timeout))
 
     while [ $SECONDS -lt $end_time ]; do
-        if nc -z "$server" "$port" </dev/null; then
+        # Use nc to check for SSH banner without triggering auth penalties
+        if nc -z -w 3 "$server" "$port" </dev/null 2>/dev/null; then
+            # Port is open, wait a bit for sshd to fully initialize
+            sleep 10
             return 0
         fi
-        sleep 1
+        sleep 5
     done
     return 1
 }
@@ -1153,8 +1154,7 @@ EOF
 # Function to install Zabbix Agent
 install_zabbix_agent() {
     if [[ -z "$zabbix_server_address" ]]; then
-        echo "Error: zabbix_agent plugin requires --zabbix-server option."
-        exit 1
+        return 0
     fi
 
     # Walidacja czy to IP lub hostname (prosta walidacja)
@@ -1173,9 +1173,9 @@ install_zabbix_agent() {
 
 
 ## EXECUTION ##
-if ! dpkg -s qemu-system netcat-traditional ovmf >/dev/null 2>&1; then
+if ! dpkg -s qemu-system netcat-traditional ovmf xorriso >/dev/null 2>&1; then
   apt-get update
-  apt-get install -y qemu-system netcat-traditional ovmf
+  apt-get install -y qemu-system netcat-traditional ovmf xorriso
 fi
 
 
@@ -1235,7 +1235,7 @@ fi
 hard_disks=()
 while read -r line; do
     hard_disks+=("$line")
-done < <(lsblk -o NAME -d -n -p | grep -v 'loop' | grep -v 'sr')
+done < <(lsblk -o NAME,TYPE -d -n -p | grep ' disk' | awk '{print $1}' | grep -v -E 'loop|sr|nbd|ram')
 
 latest_machine=$(qemu-system-x86_64 -machine help | grep -oP "pc-q35-\d+\.\d+" | sort -V | tail -n 1)
 
@@ -1291,6 +1291,11 @@ if [ "$skip_installer" = false ]; then
         show_block_devices
         show_network_interfaces
 
+        # Compute network variables needed for answer.toml
+        MAIN_IPV4_CIDR="$(ip address show ${WAN_IFACE} | grep global | grep "inet " | xargs | cut -d" " -f2)"
+        MAIN_IPV4_GW="$(ip route | grep default | xargs | cut -d" " -f3)"
+        MAIN_MAC_ADDR="$(cat /sys/class/net/${WAN_IFACE}/address)"
+
         # Generate answer.toml
         answer_toml="/tmp/answer.toml"
         generate_answer_toml "$answer_toml"
@@ -1321,6 +1326,10 @@ if [ "$skip_installer" = false ]; then
 
         # Create auto-install ISO
         auto_iso=$(create_autoinstall_iso "$latest_iso_name" "$answer_toml")
+        if [ $? -ne 0 ] || [ -z "$auto_iso" ]; then
+            echo -e "${CLR_RED}✗ Failed to create auto-install ISO. Aborting.${CLR_RESET}"
+            exit 1
+        fi
 
         # Use the auto-install ISO for installation
         install_iso="$auto_iso"
@@ -1347,8 +1356,12 @@ if [ "$skip_installer" = false ]; then
 
     # Building QEMU command with detected hard disks
     if [ "$automated_install" = true ]; then
-        # Automated install - no VNC password needed, runs in background
-        qemu_command="qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $install_iso -nographic -serial mon:stdio -no-reboot"
+        # Automated install - VNC available for optional monitoring
+        echo
+        echo -e "${CLR_CYAN}You can optionally monitor the installation via VNC:${CLR_RESET}"
+        echo "Connect to vnc://$PUBLIC_IPV4:5900 with password: $vnc_password"
+        echo
+        qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $install_iso -device virtio-net-pci,netdev=net0 -netdev user,id=net0 -vnc :0,password -monitor stdio -no-reboot"
     else
         # Manual install - VNC with password
         qemu_command="printf \"change vnc password\n%s\n\" $vnc_password | qemu-system-x86_64 -machine $latest_machine -enable-kvm $bios -cpu host -smp 4 -m 4096 -boot d -cdrom $install_iso -vnc :0,password -monitor stdio -no-reboot"
@@ -1425,13 +1438,36 @@ fi
 echo -e "${CLR_CYAN}Waiting for start SSH server on proxmox...${CLR_RESET}"
 check_ssh_server || { echo -e "${CLR_RED}✗ Fatal: Proxmox may not have started properly because SSH on socket $SSHIP:$SSHPORT is not working.${CLR_RESET}"; exit 1; }
 echo
-echo "Please enter the password for the root user that you set during the Proxmox installation."
-echo "Remember not to select the reboot option in the 'run_tteck_post-pve-install' plugin!"
-echo
 
-ssh-copy-id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP -C exit 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+if [ "$automated_install" = true ]; then
+    # In automated install, SSH key is already in answer.toml - just verify connection
+    echo -e "${CLR_CYAN}Verifying SSH connection (key pre-installed via answer.toml)...${CLR_RESET}"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP -C exit 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    echo -e "${CLR_GREEN}✓ SSH connection verified${CLR_RESET}"
+else
+    echo "Please enter the password for the root user that you set during the Proxmox installation."
+    echo "Remember not to select the reboot option in the 'run_tteck_post-pve-install' plugin!"
+    echo
+    ssh-copy-id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT $SSHIP -C exit 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)"
+fi
 
+
+# Update package lists before running plugins (wait for any running apt/dpkg to finish)
+echo -e "${CLR_CYAN}Updating package lists on Proxmox...${CLR_RESET}"
+for i in $(seq 1 30); do
+    result=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSHPORT root@$SSHIP "
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock 2>/dev/null; do sleep 2; done
+        apt-get update --allow-releaseinfo-change 2>&1; echo EXIT_CODE:\$?
+    " 2>&1 | grep -E -v "(Warning: Permanently added |Connection to $SSHIP closed)")
+    exit_code=$(echo "$result" | grep -oP 'EXIT_CODE:\K[0-9]+')
+    if [ "$exit_code" = "0" ] || [ "$exit_code" = "100" ]; then
+        echo -e "${CLR_GREEN}✓ Package lists updated${CLR_RESET}"
+        break
+    fi
+    echo -e "${CLR_YELLOW}apt update failed (locked?), retrying in 10s... ($i/30)${CLR_RESET}"
+    sleep 10
+done
 
 # Run enabled plugins
 for plugin in $(echo "$plugin_list" | tr ',' '\n'); do
